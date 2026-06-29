@@ -52,21 +52,26 @@ defmodule LeythersCom.Ingestion do
   end
 
   def ingest_rss_feed(attrs, http_client \\ Req) when is_map(attrs) do
+    started_at = System.monotonic_time()
     attrs = Basic.normalize(attrs)
     feed_url = Map.get(attrs, "url")
     origin_provider = Map.get(attrs, "origin_provider")
     include_keywords = Map.get(attrs, "include_keywords", [])
 
-    cond do
-      blank?(feed_url) ->
-        {:error, :missing_url}
+    result =
+      cond do
+        blank?(feed_url) ->
+          {:error, :missing_url}
 
-      blank?(origin_provider) ->
-        {:error, :missing_origin_provider}
+        blank?(origin_provider) ->
+          {:error, :missing_origin_provider}
 
-      true ->
-        ingest_feed_items(feed_url, origin_provider, include_keywords, http_client)
-    end
+        true ->
+          ingest_feed_items(feed_url, origin_provider, include_keywords, http_client)
+      end
+
+    emit_feed_ingestion_telemetry(result, started_at, origin_provider, feed_url)
+    result
   end
 
   def ingest_configured_feeds do
@@ -82,10 +87,74 @@ defmodule LeythersCom.Ingestion do
     |> Oban.insert()
   end
 
+  def feed_freshness_report(opts \\ []) do
+    started_at = System.monotonic_time()
+    origin_providers = opts[:origin_providers] || configured_origin_providers()
+    stale_after_hours = opts[:stale_after_hours] || stale_after_hours()
+
+    latest_by_provider = latest_source_inserted_at_by_provider(origin_providers)
+    now = DateTime.utc_now()
+    stale_after_seconds = stale_after_hours * 3600
+
+    report =
+      Enum.map(origin_providers, fn origin_provider ->
+        last_seen_at = Map.get(latest_by_provider, origin_provider)
+
+        age_seconds =
+          case last_seen_at do
+            %DateTime{} = timestamp -> DateTime.diff(now, timestamp, :second)
+            _ -> nil
+          end
+
+        stale = is_nil(age_seconds) or age_seconds > stale_after_seconds
+
+        %{
+          origin_provider: origin_provider,
+          last_seen_at: last_seen_at,
+          age_seconds: age_seconds,
+          stale: stale
+        }
+      end)
+
+    :telemetry.execute(
+      [:leythers_com, :ingestion, :feed_freshness, :query, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      %{result: :ok, provider_count: length(origin_providers)}
+    )
+
+    report
+  end
+
   defp maybe_filter_status(query, nil), do: query
   defp maybe_filter_status(query, status), do: where(query, [r], r.status == ^status)
 
   defp blank?(value), do: value in [nil, ""]
+
+  defp configured_origin_providers do
+    :leythers_com
+    |> Application.get_env(:ingestion_feeds, [])
+    |> Enum.map(&(Map.get(&1, :origin_provider) || Map.get(&1, "origin_provider")))
+    |> Enum.reject(&blank?/1)
+    |> Enum.uniq()
+  end
+
+  defp stale_after_hours do
+    :leythers_com
+    |> Application.get_env(:ingestion_monitoring, [])
+    |> Keyword.get(:stale_after_hours, 6)
+  end
+
+  defp latest_source_inserted_at_by_provider([]), do: %{}
+
+  defp latest_source_inserted_at_by_provider(origin_providers) do
+    from(source in RawSource,
+      where: source.origin_provider in ^origin_providers,
+      group_by: source.origin_provider,
+      select: {source.origin_provider, max(source.inserted_at)}
+    )
+    |> Repo.all()
+    |> Map.new()
+  end
 
   defp ingest_feed_items(feed_url, origin_provider, include_keywords, http_client) do
     with {:ok, feed_body} <- http_client.fetch(feed_url) do
@@ -95,6 +164,38 @@ defmodule LeythersCom.Ingestion do
       |> reduce_feed_items()
       |> then(&{:ok, &1})
     end
+  end
+
+  defp emit_feed_ingestion_telemetry(result, started_at, origin_provider, feed_url) do
+    metadata =
+      case result do
+        {:ok, stats} ->
+          %{
+            result: :ok,
+            origin_provider: origin_provider,
+            feed_url: feed_url,
+            processed: stats.processed,
+            inserted: stats.inserted,
+            errors: stats.errors
+          }
+
+        {:error, reason} ->
+          %{
+            result: :error,
+            origin_provider: origin_provider,
+            feed_url: feed_url,
+            reason: inspect(reason),
+            processed: 0,
+            inserted: 0,
+            errors: 0
+          }
+      end
+
+    :telemetry.execute(
+      [:leythers_com, :ingestion, :feed_ingest, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      metadata
+    )
   end
 
   defp maybe_filter_items_by_keywords(items, include_keywords) when is_list(include_keywords) do

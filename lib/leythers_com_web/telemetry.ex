@@ -98,6 +98,16 @@ defmodule LeythersComWeb.Telemetry do
       sum("leythers_com.content.ai_editorial.stop.count",
         tags: [:result, :action, :rumour, :significant_change]
       ),
+      summary("leythers_com.ingestion.feed_ingest.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result, :origin_provider]
+      ),
+      sum("leythers_com.ingestion.feed_ingest.stop.count", tags: [:result, :origin_provider]),
+      summary("leythers_com.ingestion.feed_freshness.query.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.ingestion.feed_freshness.query.stop.count", tags: [:result]),
       summary("leythers_com.intelligence.cost_ledger.upsert.stop.duration",
         unit: {:native, :millisecond},
         tags: [:result]

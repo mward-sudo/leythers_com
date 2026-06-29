@@ -149,4 +149,89 @@ defmodule LeythersCom.IngestionTest do
       assert updated_source.url == "https://example.com/leigh-win"
     end
   end
+
+  describe "ingest_rss_feed/2" do
+    defmodule FeedClient do
+      def fetch(_url) do
+        {:ok,
+         """
+         <rss version=\"2.0\">
+           <channel>
+             <item>
+               <title>Leigh item one</title>
+               <link>https://example.com/leigh-item-one</link>
+               <description>One summary</description>
+               <pubDate>Mon, 29 Jun 2026 10:00:00 GMT</pubDate>
+             </item>
+           </channel>
+         </rss>
+         """}
+      end
+    end
+
+    test "emits feed ingest telemetry with provider metadata" do
+      handler_id = "ingestion-feed-ingest-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:leythers_com, :ingestion, :feed_ingest, :stop],
+          fn event, measurements, metadata, test_pid ->
+            send(test_pid, {:telemetry_event, event, measurements, metadata})
+          end,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      assert {:ok, %{processed: 1, inserted: 1, errors: 0}} =
+               Ingestion.ingest_rss_feed(
+                 %{
+                   "url" => "https://example.com/feed.xml",
+                   "origin_provider" => "telemetry_provider"
+                 },
+                 FeedClient
+               )
+
+      assert_receive {:telemetry_event, [:leythers_com, :ingestion, :feed_ingest, :stop],
+                      measurements, metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :ok
+      assert metadata.origin_provider == "telemetry_provider"
+      assert metadata.processed == 1
+      assert metadata.inserted == 1
+      assert metadata.errors == 0
+    end
+  end
+
+  describe "feed_freshness_report/1" do
+    test "reports stale and fresh providers" do
+      {:ok, _fresh_source} =
+        Ingestion.create_raw_source(%{
+          title: "Recent source",
+          url: "https://example.com/fresh-source",
+          origin_provider: "fresh_provider",
+          external_published_at: DateTime.utc_now()
+        })
+
+      report =
+        Ingestion.feed_freshness_report(
+          origin_providers: ["fresh_provider", "stale_provider"],
+          stale_after_hours: 1
+        )
+
+      fresh = Enum.find(report, &(&1.origin_provider == "fresh_provider"))
+      stale = Enum.find(report, &(&1.origin_provider == "stale_provider"))
+
+      assert fresh.stale == false
+      assert is_integer(fresh.age_seconds)
+      assert %DateTime{} = fresh.last_seen_at
+
+      assert stale.stale == true
+      assert stale.age_seconds == nil
+      assert stale.last_seen_at == nil
+    end
+  end
 end
