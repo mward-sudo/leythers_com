@@ -77,15 +77,19 @@ defmodule LeythersCom.Content do
     source_ids = source_ids |> Enum.reject(&blank?/1) |> Enum.map(&to_string/1) |> Enum.uniq()
 
     result =
-      Repo.transaction(fn ->
-        publish_or_update_ai_decision(
-          voiced,
-          body,
-          source_ids,
-          significant_change?,
-          recency_window_hours
-        )
-      end)
+      if source_ids == [] do
+        {:error, :source_ids_required}
+      else
+        Repo.transaction(fn ->
+          publish_or_update_ai_decision(
+            voiced,
+            body,
+            source_ids,
+            significant_change?,
+            recency_window_hours
+          )
+        end)
+      end
 
     finalized_result =
       case result do

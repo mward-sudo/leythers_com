@@ -19,6 +19,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Repo
 
   @default_batch_size 20
+  @default_significance_threshold 70
 
   def enqueue(attrs \\ %{}) when is_map(attrs) do
     attrs
@@ -235,7 +236,25 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end)
   end
 
-  defp significant_change_cluster?(cluster_sources), do: length(cluster_sources) >= 3
+  defp significant_change_cluster?(cluster_sources) do
+    significance_score(cluster_sources) >= significance_threshold()
+  end
+
+  defp significance_score(cluster_sources) do
+    source_count_score = min(length(cluster_sources) * 25, 60)
+    provider_diversity_score = min(distinct_provider_count(cluster_sources) * 15, 30)
+    rumour_score = if rumour_cluster?(cluster_sources), do: 10, else: 0
+
+    source_count_score + provider_diversity_score + rumour_score
+  end
+
+  defp distinct_provider_count(cluster_sources) do
+    cluster_sources
+    |> Enum.map(& &1.origin_provider)
+    |> Enum.reject(&blank?/1)
+    |> Enum.uniq()
+    |> length()
+  end
 
   defp cluster_sources(sources) do
     sources
@@ -277,6 +296,12 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:source_batch_size, @default_batch_size)
+  end
+
+  defp significance_threshold do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:significance_threshold, @default_significance_threshold)
   end
 
   defp normalize_args(args) do

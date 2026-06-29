@@ -319,13 +319,15 @@ defmodule LeythersCom.ContentTest do
 
   describe "publish_or_update_ai_article/3" do
     test "creates a new ai article with voice styling and rumour labeling" do
+      source_id = create_source_id!("Leigh linked source", "https://example.com/ai-linked-source")
+
       assert {:ok, :created, article} =
                Content.publish_or_update_ai_article(
                  %{
                    title: "Leigh linked with surprise halfback",
                    body: "Reports suggest Leigh are exploring a move."
                  },
-                 [],
+                 [source_id],
                  rumour: true
                )
 
@@ -336,17 +338,25 @@ defmodule LeythersCom.ContentTest do
     end
 
     test "updates recent matching ai article when change is not significant" do
+      source_id = create_source_id!("Leigh update source", "https://example.com/ai-update-source")
+
       assert {:ok, :created, created_article} =
-               Content.publish_or_update_ai_article(%{
-                 title: "Leigh eye cup final boost",
-                 body: "Initial version"
-               })
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh eye cup final boost",
+                   body: "Initial version"
+                 },
+                 [source_id]
+               )
 
       assert {:ok, :updated, updated_article} =
-               Content.publish_or_update_ai_article(%{
-                 title: "Leigh eye cup final boost as squad improves",
-                 body: "Updated version"
-               })
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh eye cup final boost as squad improves",
+                   body: "Updated version"
+                 },
+                 [source_id]
+               )
 
       assert updated_article.id == created_article.id
       assert updated_article.version == created_article.version + 1
@@ -354,11 +364,17 @@ defmodule LeythersCom.ContentTest do
     end
 
     test "creates a new ai article when change is significant" do
+      source_id =
+        create_source_id!("Leigh significant source", "https://example.com/ai-significant-source")
+
       assert {:ok, :created, first_article} =
-               Content.publish_or_update_ai_article(%{
-                 title: "Leigh set for another big night",
-                 body: "Base story"
-               })
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh set for another big night",
+                   body: "Base story"
+                 },
+                 [source_id]
+               )
 
       assert {:ok, :created, second_article} =
                Content.publish_or_update_ai_article(
@@ -366,13 +382,36 @@ defmodule LeythersCom.ContentTest do
                    title: "Leigh set for another big night with transfer twist",
                    body: "Significant shift"
                  },
-                 [],
+                 [source_id],
                  significant_change: true
                )
 
       refute second_article.id == first_article.id
       assert second_article.version == 1
     end
+
+    test "returns error when ai article has no source links" do
+      assert {:error, :source_ids_required} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh unsupported source-less AI story",
+                   body: "This should fail because source ids are required."
+                 },
+                 []
+               )
+    end
+  end
+
+  defp create_source_id!(title, url) do
+    {:ok, source} =
+      Ingestion.create_raw_source(%{
+        title: title,
+        url: url,
+        origin_provider: "test_feed",
+        external_published_at: DateTime.utc_now()
+      })
+
+    source.id
   end
 
   defp count_article_sources(article_id) do

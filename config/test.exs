@@ -54,6 +54,7 @@ config :leythers_com, :editorial_orchestration,
 config :leythers_com, :intelligence_generation,
   auto_generation_enabled: false,
   source_batch_size: 20,
+  significance_threshold: 70,
   llm_draft_enabled: false,
   llm_cost_per_1k_tokens_gbp: "0.000000"
 

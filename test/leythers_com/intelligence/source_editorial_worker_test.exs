@@ -17,6 +17,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     Application.put_env(:leythers_com, :intelligence_generation,
       auto_generation_enabled: true,
       source_batch_size: 20,
+      significance_threshold: 70,
       llm_draft_enabled: false,
       llm_cost_per_1k_tokens_gbp: "0.000000"
     )
@@ -85,5 +86,84 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     assert Decimal.compare(Intelligence.monthly_spend(Date.utc_today()), Decimal.new("20.00")) ==
              :eq
+  end
+
+  test "updates existing ai article when cluster significance is below threshold" do
+    {:ok, _source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh cup final injury update",
+        url: "https://example.com/low-significance-1",
+        body_summary: "Initial injury concern before the cup final.",
+        origin_provider: "provider_low",
+        external_published_at: ~U[2026-06-29 12:00:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    [first_article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+
+    {:ok, _source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh cup final injury update continues",
+        url: "https://example.com/low-significance-2",
+        body_summary: "Further fitness notes from the same story line.",
+        origin_provider: "provider_low",
+        external_published_at: ~U[2026-06-29 13:00:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert length(ai_articles) == 1
+
+    [updated_article] = ai_articles
+    assert updated_article.id == first_article.id
+    assert updated_article.version == first_article.version + 1
+  end
+
+  test "creates a new ai article when cluster significance meets threshold" do
+    {:ok, _source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh transfer window headline grows",
+        url: "https://example.com/high-significance-base",
+        body_summary: "Base transfer headline for this story key.",
+        origin_provider: "provider_base",
+        external_published_at: ~U[2026-06-29 14:00:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+    [_first_article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title: "Leigh transfer window headline grows with late twist",
+               url: "https://example.com/high-significance-1",
+               body_summary: "Provider one confirms ongoing transfer movement.",
+               origin_provider: "provider_one",
+               external_published_at: ~U[2026-06-29 15:00:00.000000Z]
+             })
+
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title: "Leigh transfer window headline grows under fresh claims",
+               url: "https://example.com/high-significance-2",
+               body_summary: "Provider two adds additional transfer context.",
+               origin_provider: "provider_two",
+               external_published_at: ~U[2026-06-29 15:10:00.000000Z]
+             })
+
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title: "Leigh transfer window headline grows amid wider links",
+               url: "https://example.com/high-significance-3",
+               body_summary: "Provider three contributes related transfer notes.",
+               origin_provider: "provider_three",
+               external_published_at: ~U[2026-06-29 15:20:00.000000Z]
+             })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert length(ai_articles) == 2
   end
 end
