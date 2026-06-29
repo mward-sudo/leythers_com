@@ -395,10 +395,11 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   defp job_card(assigns) do
     ~H"""
-    <div
+    <.link
+      patch={jobs_path(@params, %{job_id: to_string(@job.id)})}
       id={"job-card-#{@job.id}"}
       class={[
-        "rounded-lg border px-3 py-2.5 transition-colors",
+        "block rounded-lg border px-3 py-2.5 transition-colors cursor-pointer",
         @selected && "border-primary bg-primary/5",
         not @selected && "border-base-300 hover:border-base-400/60 hover:bg-base-200/30"
       ]}
@@ -421,15 +422,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
             attempt {@job.attempt} · {format_datetime(@job.inserted_at)}
           </p>
         </div>
-        <.link
-          patch={jobs_path(@params, %{job_id: to_string(@job.id)})}
-          id={"job-view-#{@job.id}"}
-          class="btn btn-xs btn-ghost mt-0.5 shrink-0"
-        >
-          Details
-        </.link>
       </div>
-    </div>
+    </.link>
     """
   end
 

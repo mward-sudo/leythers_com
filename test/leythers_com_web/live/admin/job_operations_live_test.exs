@@ -66,7 +66,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
 
       html =
         view
-        |> element("#job-view-#{completed.id}")
+        |> element("#job-card-#{completed.id}")
         |> render_click()
 
       assert html =~ "Job #"
