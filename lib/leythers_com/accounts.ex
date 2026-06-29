@@ -294,4 +294,60 @@ defmodule LeythersCom.Accounts do
       end
     end)
   end
+
+  ## User Management
+
+  @doc """
+  Checks whether any users exist in the system.
+
+  Returns true if at least one user exists, false otherwise.
+  """
+  def users_exist? do
+    Repo.exists?(User)
+  end
+
+  @doc """
+  Lists all users in the system.
+
+  Returns a list of all users, ordered by email.
+  """
+  def list_users do
+    from(u in User, order_by: [asc: u.email])
+    |> Repo.all()
+  end
+
+  @doc """
+  Creates the first admin user in the system.
+
+  This function should only be called when no users exist. It creates
+  a user and marks them as an admin.
+
+  Returns {:ok, user} or {:error, changeset}.
+  """
+  def create_first_user(attrs) do
+    %User{}
+    |> User.email_changeset(attrs)
+    |> Ecto.Changeset.change(is_admin: true)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Updates a user's admin status.
+
+  Returns {:ok, user} or {:error, changeset}.
+  """
+  def update_user_admin(user, is_admin) when is_boolean(is_admin) do
+    user
+    |> Ecto.Changeset.change(is_admin: is_admin)
+    |> Repo.update()
+  end
+
+  @doc """
+  Deletes a user.
+
+  Returns {:ok, user} or {:error, changeset}.
+  """
+  def delete_user(user) do
+    Repo.delete(user)
+  end
 end
