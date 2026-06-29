@@ -94,6 +94,14 @@ config :leythers_com, :llm,
   num_predict: 600,
   timeout_ms: 30_000
 
+config :leythers_com, :homepage_ranking,
+  llm_enabled: true,
+  llm_candidate_limit: 4,
+  llm_cooldown_seconds: 1_800,
+  recency_weight: 0.45,
+  importance_weight: 0.55,
+  max_age_hours: 72
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

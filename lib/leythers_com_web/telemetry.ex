@@ -120,6 +120,11 @@ defmodule LeythersComWeb.Telemetry do
         tags: [:result]
       ),
       sum("leythers_com.intelligence.dead_letter.retry.stop.count", tags: [:result]),
+      summary("leythers_com.intelligence.homepage_ranking.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.intelligence.homepage_ranking.stop.count", tags: [:result]),
       summary("leythers_com.web.admin_overview.mount.stop.duration",
         unit: {:native, :millisecond},
         tags: [:result, :budget_state]

@@ -35,6 +35,14 @@ config :logger, level: :warning
 # Disable Oban queues and plugins in test
 config :leythers_com, Oban, testing: :inline
 
+config :leythers_com, :homepage_ranking,
+  llm_enabled: false,
+  llm_candidate_limit: 0,
+  llm_cooldown_seconds: 1_800,
+  recency_weight: 0.45,
+  importance_weight: 0.55,
+  max_age_hours: 72
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 
