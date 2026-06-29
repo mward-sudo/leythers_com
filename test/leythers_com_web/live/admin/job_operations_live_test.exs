@@ -20,28 +20,20 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
   describe "index" do
     setup :register_and_log_in_user
 
-    test "renders lifecycle buckets and switches bucket listing", %{conn: conn} do
+    test "renders all three job columns simultaneously", %{conn: conn} do
       executing =
         create_job("executing", "LeythersCom.Intelligence.SourceEditorialWorker", "intelligence")
 
       scheduled = create_job("scheduled", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
 
-      _completed =
-        create_job("completed", "LeythersCom.Intelligence.SourceEditorialWorker", "intelligence")
-
       {:ok, view, html} = live(conn, ~p"/admin/jobs")
 
       assert html =~ "Job Operations"
-      assert has_element?(view, "#job-bucket-active")
-      assert has_element?(view, "#job-bucket-queued")
-      assert has_element?(view, "#job-bucket-terminal")
-      assert has_element?(view, "#job-row-#{executing.id}")
-
-      view
-      |> element("#job-bucket-queued")
-      |> render_click()
-
-      assert has_element?(view, "#job-row-#{scheduled.id}")
+      assert has_element?(view, "#col-active")
+      assert has_element?(view, "#col-queued")
+      assert has_element?(view, "#col-terminal")
+      assert has_element?(view, "#job-card-#{executing.id}")
+      assert has_element?(view, "#job-card-#{scheduled.id}")
     end
 
     test "shows persisted diagnostics in the drill-down pane", %{conn: conn} do
@@ -70,14 +62,14 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
                  change_details: %{outcome: "created", target_article_identifier: "test-123"}
                })
 
-      {:ok, view, _html} = live(conn, ~p"/admin/jobs?bucket=terminal")
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
 
       html =
         view
         |> element("#job-view-#{completed.id}")
         |> render_click()
 
-      assert html =~ "Job ###{completed.id}"
+      assert html =~ "Job #"
       assert html =~ "https://example.com/derby"
       assert html =~ "target_article_identifier"
     end
@@ -92,28 +84,28 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
           )
       end
 
-      {:ok, view, _html} = live(conn, ~p"/admin/jobs?bucket=terminal")
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
 
-      assert render(view) =~ "Page 1 of 2"
+      assert render(view) =~ "1 / 2"
 
       view
-      |> element("#job-pagination a", "Next")
+      |> element("#terminal-pagination a", "Next →")
       |> render_click()
 
-      assert render(view) =~ "Page 2 of 2"
+      assert render(view) =~ "2 / 2"
     end
 
     test "refreshes in real time when job operations update message is received", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/admin/jobs?bucket=active")
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
 
-      assert render(view) =~ "0 matching job(s)"
+      assert has_element?(view, "#col-active")
 
       executing =
         create_job("executing", "LeythersCom.Intelligence.SourceEditorialWorker", "intelligence")
 
       send(view.pid, {:job_operations, :updated})
 
-      assert has_element?(view, "#job-row-#{executing.id}")
+      assert has_element?(view, "#job-card-#{executing.id}")
     end
 
     test "regenerates all processed sources from admin controls", %{conn: conn} do

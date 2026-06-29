@@ -7,6 +7,7 @@ defmodule LeythersCom.Intelligence do
 
   alias LeythersCom.Intelligence.ArticleGenerationDecision
   alias LeythersCom.Intelligence.CostLedger
+  alias LeythersCom.Intelligence.HomepageRankingDecision
   alias LeythersCom.Intelligence.JobEffectEvent
   alias LeythersCom.Repo
   alias Oban.Job
@@ -162,6 +163,35 @@ defmodule LeythersCom.Intelligence do
   end
 
   def recent_article_generation_decisions(_limit), do: []
+
+  def list_jobs_by_bucket(bucket, filters \\ %{})
+
+  def list_jobs_by_bucket(bucket, filters) when is_atom(bucket) and is_map(filters) do
+    states = Map.get(@job_bucket_states, bucket, Map.fetch!(@job_bucket_states, :active))
+
+    filters
+    |> job_operations_base_query()
+    |> where([job], job.state in ^states)
+    |> order_by([job], desc: job.attempted_at, desc: job.inserted_at)
+    |> Repo.all()
+  end
+
+  def list_jobs_by_bucket(_bucket, _filters), do: []
+
+  def list_processing_activity(limit \\ 60)
+
+  def list_processing_activity(limit) when is_integer(limit) and limit > 0 do
+    live = live_activity_jobs()
+    editorial = editorial_activity_runs(limit)
+    ingestion = ingestion_activity_runs(limit)
+    ranking = ranking_activity_runs(limit)
+
+    (live ++ editorial ++ ingestion ++ ranking)
+    |> Enum.sort_by(& &1.timestamp, {:desc, DateTime})
+    |> Enum.take(limit)
+  end
+
+  def list_processing_activity(_limit), do: []
 
   def list_failed_jobs(limit \\ 25)
 
@@ -664,4 +694,218 @@ defmodule LeythersCom.Intelligence do
   defp normalize_budget_result(:ok), do: :ok
   defp normalize_budget_result({:ok, _}), do: :ok
   defp normalize_budget_result(_), do: :error
+
+  # ── Processing activity timeline ────────────────────────────────────────────
+
+  defp live_activity_jobs do
+    live_states =
+      Map.fetch!(@job_bucket_states, :active) ++ Map.fetch!(@job_bucket_states, :queued)
+
+    Job
+    |> job_operations_scope()
+    |> where([job], job.state in ^live_states)
+    |> order_by([job], asc: job.inserted_at)
+    |> Repo.all()
+    |> Enum.map(&job_to_live_activity_item/1)
+  end
+
+  defp job_to_live_activity_item(job) do
+    %{
+      id: "live-#{job.id}",
+      type: :live_job,
+      subtype: worker_activity_subtype(job.worker),
+      timestamp: job.attempted_at || job.inserted_at,
+      state: job.state,
+      job_id: job.id,
+      worker: job.worker,
+      queue: job.queue,
+      args: job.args || %{}
+    }
+  end
+
+  defp worker_activity_subtype(worker) when is_binary(worker) do
+    cond do
+      String.contains?(worker, "SourceEditorialWorker") -> :editorial
+      String.contains?(worker, "FetchRssFeedWorker") -> :ingestion
+      true -> :other
+    end
+  end
+
+  defp worker_activity_subtype(_), do: :other
+
+  defp editorial_activity_runs(limit) do
+    events =
+      JobEffectEvent
+      |> job_effect_events_scope()
+      |> where([event], like(event.worker, "%.SourceEditorialWorker"))
+      |> order_by([event], desc: event.inserted_at)
+      |> limit(^(limit * 10))
+      |> preload([:permanent_article])
+      |> Repo.all()
+
+    events_by_job = Enum.group_by(events, & &1.oban_job_id)
+
+    run_ids =
+      events
+      |> Enum.map(&get_run_id_from_event/1)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+
+    decisions_by_run =
+      if run_ids == [] do
+        %{}
+      else
+        ArticleGenerationDecision
+        |> where([d], d.run_id in ^run_ids)
+        |> order_by([d], asc: d.inserted_at)
+        |> preload([:permanent_article])
+        |> Repo.all()
+        |> Enum.group_by(& &1.run_id)
+      end
+
+    events_by_job
+    |> Enum.map(fn {job_id, job_events} ->
+      sorted_events = Enum.sort_by(job_events, & &1.inserted_at, DateTime)
+      latest = List.last(sorted_events)
+
+      job_run_ids =
+        sorted_events
+        |> Enum.map(&get_run_id_from_event/1)
+        |> Enum.reject(&is_nil/1)
+        |> Enum.uniq()
+
+      job_decisions =
+        job_run_ids
+        |> Enum.flat_map(&Map.get(decisions_by_run, &1, []))
+
+      %{
+        id: "editorial-#{job_id}",
+        type: :editorial_run,
+        subtype: :editorial,
+        timestamp: latest.inserted_at,
+        state: latest.state,
+        job_id: job_id,
+        clusters: build_editorial_clusters(sorted_events, job_decisions),
+        stats: editorial_run_stats(job_decisions)
+      }
+    end)
+    |> Enum.sort_by(& &1.timestamp, {:desc, DateTime})
+    |> Enum.take(limit)
+  end
+
+  defp get_run_id_from_event(event) do
+    Map.get(event.change_details || %{}, "run_id")
+  end
+
+  defp build_editorial_clusters(events, decisions) do
+    Enum.map(events, fn event ->
+      event_source_ids = MapSet.new(event.source_ids || [])
+
+      matched_decision =
+        Enum.find(decisions, fn d ->
+          d_ids = MapSet.new(d.source_ids || [])
+          not MapSet.disjoint?(event_source_ids, d_ids)
+        end)
+
+      %{
+        decision: matched_decision,
+        event: event,
+        sources: get_in(event.source_input_snapshot || %{}, ["sources"]) || [],
+        action: event.decision_action
+      }
+    end)
+  end
+
+  defp editorial_run_stats(decisions) do
+    created = Enum.count(decisions, &(&1.decision_action == "created"))
+    updated = Enum.count(decisions, &(&1.decision_action == "updated"))
+
+    skipped =
+      Enum.count(decisions, &(&1.decision_action in ["skipped_budget", "skipped_publish_error"]))
+
+    total_in = Enum.sum(Enum.map(decisions, & &1.input_tokens))
+    total_out = Enum.sum(Enum.map(decisions, & &1.output_tokens))
+
+    %{
+      clusters: length(decisions),
+      created: created,
+      updated: updated,
+      skipped: skipped,
+      input_tokens: total_in,
+      output_tokens: total_out,
+      llm_used: total_in > 0
+    }
+  end
+
+  defp ingestion_activity_runs(limit) do
+    JobEffectEvent
+    |> job_effect_events_scope()
+    |> where([event], like(event.worker, "%.FetchRssFeedWorker"))
+    |> order_by([event], desc: event.inserted_at)
+    |> limit(^limit)
+    |> Repo.all()
+    |> Enum.map(&ingestion_event_to_activity_item/1)
+  end
+
+  defp ingestion_event_to_activity_item(event) do
+    feed = get_in(event.source_input_snapshot || %{}, ["feed"]) || %{}
+    details = event.change_details || %{}
+    items = get_in(event.source_input_snapshot || %{}, ["items"]) || []
+
+    %{
+      id: "ingestion-#{event.oban_job_id}",
+      type: :ingestion_run,
+      subtype: :ingestion,
+      timestamp: event.inserted_at,
+      state: event.state,
+      job_id: event.oban_job_id,
+      event: event,
+      feed_provider: Map.get(feed, "origin_provider", "unknown"),
+      feed_url: Map.get(feed, "url"),
+      items: items,
+      stats: %{
+        processed: Map.get(details, "processed", 0),
+        inserted: Map.get(details, "inserted", 0),
+        seen: Map.get(details, "seen", 0),
+        errors: Map.get(details, "errors", 0)
+      }
+    }
+  end
+
+  defp ranking_activity_runs(limit) do
+    recent_runs =
+      HomepageRankingDecision
+      |> group_by([d], d.run_id)
+      |> select([d], {d.run_id, max(d.inserted_at)})
+      |> order_by([d], desc: max(d.inserted_at))
+      |> limit(^limit)
+      |> Repo.all()
+
+    run_ids = Enum.map(recent_runs, fn {id, _} -> id end)
+    timestamps = Map.new(recent_runs, fn {id, ts} -> {id, ts} end)
+
+    if run_ids == [] do
+      []
+    else
+      HomepageRankingDecision
+      |> where([d], d.run_id in ^run_ids)
+      |> order_by([d], asc: d.rank_position)
+      |> preload([:permanent_article])
+      |> Repo.all()
+      |> Enum.group_by(& &1.run_id)
+      |> Enum.map(fn {run_id, run_decisions} ->
+        ts = Map.fetch!(timestamps, run_id)
+
+        %{
+          id: "ranking-#{run_id}",
+          type: :ranking_refresh,
+          subtype: :ranking,
+          timestamp: ts,
+          run_id: run_id,
+          decisions: run_decisions,
+          article_count: length(run_decisions)
+        }
+      end)
+    end
+  end
 end
