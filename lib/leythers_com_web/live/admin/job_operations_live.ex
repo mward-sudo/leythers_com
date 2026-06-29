@@ -5,7 +5,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   use LeythersComWeb, :live_view
 
+  alias LeythersCom.Ingestion
   alias LeythersCom.Intelligence
+  alias LeythersCom.Intelligence.JobOperationsUpdates
 
   @default_bucket "active"
   @default_page 1
@@ -20,6 +22,10 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   @impl true
   def mount(_params, _session, socket) do
     filter_options = Intelligence.job_operations_filter_options()
+
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(LeythersCom.PubSub, JobOperationsUpdates.topic())
+    end
 
     {:ok,
      socket
@@ -37,6 +43,15 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   @impl true
   def handle_params(params, _uri, socket) do
+    {:noreply, load_page(socket, params)}
+  end
+
+  @impl true
+  def handle_info({:job_operations, :updated}, socket) do
+    {:noreply, load_page(socket, socket.assigns.query_params)}
+  end
+
+  defp load_page(socket, params) do
     bucket = normalize_bucket(params["bucket"])
     page = parse_positive_int(params["page"], @default_page)
     filters = normalize_filters(params)
@@ -74,15 +89,14 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       |> Enum.reject(fn {_key, value} -> value in [nil, ""] end)
       |> Map.new()
 
-    {:noreply,
-     socket
-     |> assign(:query_params, query_params)
-     |> assign(:bucket, bucket)
-     |> assign(:filters, filters)
-     |> assign(:jobs_page, jobs_page)
-     |> assign(:bucket_counts, bucket_counts)
-     |> assign(:selected_job_detail, selected_job_detail)
-     |> assign(:filters_form, to_form(filters, as: :filters))}
+    socket
+    |> assign(:query_params, query_params)
+    |> assign(:bucket, bucket)
+    |> assign(:filters, filters)
+    |> assign(:jobs_page, jobs_page)
+    |> assign(:bucket_counts, bucket_counts)
+    |> assign(:selected_job_detail, selected_job_detail)
+    |> assign(:filters_form, to_form(filters, as: :filters))
   end
 
   @impl true
@@ -95,6 +109,46 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       |> Map.put("page", "1")
 
     {:noreply, push_patch(socket, to: ~p"/admin/jobs?#{params}")}
+  end
+
+  @impl true
+  def handle_event("regenerate-all", _params, socket) do
+    case Ingestion.enqueue_article_regeneration(:all) do
+      {:ok, %{requeued_sources: requeued_sources}} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           "Queued full regeneration and re-queued #{requeued_sources} processed source(s)."
+         )
+         |> refresh_page()}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Unable to queue full regeneration: #{inspect(reason)}")
+         |> refresh_page()}
+    end
+  end
+
+  @impl true
+  def handle_event("regenerate-recent", _params, socket) do
+    case Ingestion.enqueue_article_regeneration(:recent) do
+      {:ok, %{requeued_sources: requeued_sources}} ->
+        {:noreply,
+         socket
+         |> put_flash(
+           :info,
+           "Queued recent regeneration (last 2 weeks) and re-queued #{requeued_sources} processed source(s)."
+         )
+         |> refresh_page()}
+
+      {:error, reason} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Unable to queue recent regeneration: #{inspect(reason)}")
+         |> refresh_page()}
+    end
   end
 
   @impl true
@@ -148,6 +202,40 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
             target_bucket="terminal"
             params={@query_params}
           />
+        </section>
+
+        <section
+          class="mt-6 rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm"
+          id="regeneration-controls"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 class="text-lg font-semibold">Regenerate Articles</h2>
+              <p class="text-sm text-base-content/70">
+                Re-queue previously processed sources and run editorial generation now.
+              </p>
+            </div>
+
+            <div class="flex items-center gap-2">
+              <button
+                id="regenerate-recent-button"
+                type="button"
+                class="btn btn-outline btn-sm"
+                phx-click="regenerate-recent"
+              >
+                Regenerate Recent (2 Weeks)
+              </button>
+
+              <button
+                id="regenerate-all-button"
+                type="button"
+                class="btn btn-primary btn-sm"
+                phx-click="regenerate-all"
+              >
+                Regenerate All
+              </button>
+            </div>
+          </div>
         </section>
 
         <section
@@ -466,4 +554,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   defp empty_page do
     %{entries: [], page: 1, per_page: @per_page, total_count: 0, total_pages: 1}
   end
+
+  defp refresh_page(socket),
+    do: push_patch(socket, to: jobs_path(socket.assigns.query_params, %{}))
 end

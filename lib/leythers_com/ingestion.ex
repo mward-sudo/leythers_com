@@ -14,6 +14,8 @@ defmodule LeythersCom.Ingestion do
   alias LeythersCom.Intelligence.SourceEditorialWorker
   alias LeythersCom.Repo
 
+  @recent_regeneration_window_days 14
+
   def create_raw_source(attrs) do
     attrs
     |> Basic.normalize()
@@ -90,6 +92,26 @@ defmodule LeythersCom.Ingestion do
     |> FetchRssFeedWorker.new(unique: feed_enqueue_unique_opts())
     |> Oban.insert()
   end
+
+  def enqueue_article_regeneration(scope, opts \\ [])
+
+  def enqueue_article_regeneration(scope, opts) when scope in [:all, :recent] do
+    now = opts[:now] || DateTime.utc_now()
+    enqueue_worker? = Keyword.get(opts, :enqueue_worker, true)
+
+    Repo.transaction(fn ->
+      requeued_sources =
+        RawSource
+        |> where([source], source.status == "processed")
+        |> maybe_filter_regeneration_scope(scope, now)
+        |> Repo.update_all(set: [status: "pending"])
+        |> elem(0)
+
+      maybe_enqueue_source_editorial_worker(requeued_sources, scope, enqueue_worker?)
+    end)
+  end
+
+  def enqueue_article_regeneration(_scope, _opts), do: {:error, :invalid_scope}
 
   def feed_enqueue_unique_opts do
     [
@@ -340,6 +362,28 @@ defmodule LeythersCom.Ingestion do
 
   defp reduce_feed_items(items) do
     Enum.reduce(items, %{processed: 0, inserted: 0, errors: 0}, &accumulate_feed_item/2)
+  end
+
+  defp maybe_filter_regeneration_scope(query, :all, _now), do: query
+
+  defp maybe_filter_regeneration_scope(query, :recent, now) do
+    threshold = DateTime.add(now, -@recent_regeneration_window_days * 24 * 3600, :second)
+
+    where(query, [source], source.external_published_at >= ^threshold)
+  end
+
+  defp maybe_enqueue_source_editorial_worker(requeued_sources, scope, false) do
+    %{requeued_sources: requeued_sources, job_id: nil, scope: scope}
+  end
+
+  defp maybe_enqueue_source_editorial_worker(requeued_sources, scope, true) do
+    case SourceEditorialWorker.enqueue(%{"drain_backlog" => true}) do
+      {:ok, job} ->
+        %{requeued_sources: requeued_sources, job_id: job.id, scope: scope}
+
+      {:error, reason} ->
+        Repo.rollback({:enqueue_failed, reason})
+    end
   end
 
   defp accumulate_feed_item(item, acc) do

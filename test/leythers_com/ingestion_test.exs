@@ -245,6 +245,79 @@ defmodule LeythersCom.IngestionTest do
     end
   end
 
+  describe "enqueue_article_regeneration/2" do
+    test "re-queues all processed sources when scope is all" do
+      {:ok, processed_a} =
+        Ingestion.create_raw_source(%{
+          title: "Processed A",
+          url: "https://example.com/processed-a",
+          origin_provider: "regen_test",
+          external_published_at: ~U[2026-06-28 10:00:00.000000Z]
+        })
+
+      _ = processed_a |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      {:ok, processed_b} =
+        Ingestion.create_raw_source(%{
+          title: "Processed B",
+          url: "https://example.com/processed-b",
+          origin_provider: "regen_test",
+          external_published_at: ~U[2026-06-01 10:00:00.000000Z]
+        })
+
+      _ = processed_b |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      {:ok, pending} =
+        Ingestion.create_raw_source(%{
+          title: "Already Pending",
+          url: "https://example.com/already-pending",
+          origin_provider: "regen_test",
+          status: "pending",
+          external_published_at: ~U[2026-06-28 10:00:00.000000Z]
+        })
+
+      assert {:ok, %{requeued_sources: 2, scope: :all}} =
+               Ingestion.enqueue_article_regeneration(:all, enqueue_worker: false)
+
+      assert Repo.get!(RawSource, processed_a.id).status == "pending"
+      assert Repo.get!(RawSource, processed_b.id).status == "pending"
+      assert Repo.get!(RawSource, pending.id).status == "pending"
+    end
+
+    test "re-queues only recent processed sources when scope is recent" do
+      now = ~U[2026-06-29 12:00:00.000000Z]
+
+      {:ok, recent_processed} =
+        Ingestion.create_raw_source(%{
+          title: "Recent Processed",
+          url: "https://example.com/recent-processed",
+          origin_provider: "regen_test",
+          external_published_at: ~U[2026-06-25 10:00:00.000000Z]
+        })
+
+      _ = recent_processed |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      {:ok, old_processed} =
+        Ingestion.create_raw_source(%{
+          title: "Old Processed",
+          url: "https://example.com/old-processed",
+          origin_provider: "regen_test",
+          external_published_at: ~U[2026-05-01 10:00:00.000000Z]
+        })
+
+      _ = old_processed |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      assert {:ok, %{requeued_sources: 1, scope: :recent}} =
+               Ingestion.enqueue_article_regeneration(:recent,
+                 now: now,
+                 enqueue_worker: false
+               )
+
+      assert Repo.get!(RawSource, recent_processed.id).status == "pending"
+      assert Repo.get!(RawSource, old_processed.id).status == "processed"
+    end
+  end
+
   describe "alert_on_stale_feeds/1" do
     test "emits telemetry with stale provider count" do
       handler_id = "ingestion-stale-alert-#{System.unique_integer([:positive])}"

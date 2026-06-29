@@ -4,6 +4,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
   import Ecto.Query
   import Phoenix.LiveViewTest
 
+  alias LeythersCom.Ingestion
+  alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Intelligence
   alias LeythersCom.Repo
   alias Oban.Job
@@ -99,6 +101,83 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       |> render_click()
 
       assert render(view) =~ "Page 2 of 2"
+    end
+
+    test "refreshes in real time when job operations update message is received", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs?bucket=active")
+
+      assert render(view) =~ "0 matching job(s)"
+
+      executing =
+        create_job("executing", "LeythersCom.Intelligence.SourceEditorialWorker", "intelligence")
+
+      send(view.pid, {:job_operations, :updated})
+
+      assert has_element?(view, "#job-row-#{executing.id}")
+    end
+
+    test "regenerates all processed sources from admin controls", %{conn: conn} do
+      {:ok, processed_a} =
+        Ingestion.create_raw_source(%{
+          title: "All Regen A",
+          url: "https://example.com/all-regen-a",
+          origin_provider: "job_ops_regen",
+          external_published_at: ~U[2026-06-28 10:00:00.000000Z]
+        })
+
+      _ = processed_a |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      {:ok, processed_b} =
+        Ingestion.create_raw_source(%{
+          title: "All Regen B",
+          url: "https://example.com/all-regen-b",
+          origin_provider: "job_ops_regen",
+          external_published_at: ~U[2026-06-01 10:00:00.000000Z]
+        })
+
+      _ = processed_b |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+
+      view
+      |> element("#regenerate-all-button")
+      |> render_click()
+
+      assert render(view) =~ "Queued full regeneration"
+      assert Repo.get!(RawSource, processed_a.id).status == "pending"
+      assert Repo.get!(RawSource, processed_b.id).status == "pending"
+    end
+
+    test "regenerates only recent processed sources from admin controls", %{conn: conn} do
+      {:ok, recent_processed} =
+        Ingestion.create_raw_source(%{
+          title: "Recent Regen",
+          url: "https://example.com/recent-regen",
+          origin_provider: "job_ops_regen",
+          external_published_at: DateTime.utc_now()
+        })
+
+      _ = recent_processed |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      {:ok, old_processed} =
+        Ingestion.create_raw_source(%{
+          title: "Old Regen",
+          url: "https://example.com/old-regen",
+          origin_provider: "job_ops_regen",
+          external_published_at: ~U[2026-01-01 10:00:00.000000Z]
+        })
+
+      _ = old_processed |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+
+      view
+      |> element("#regenerate-recent-button")
+      |> render_click()
+
+      assert render(view) =~ "Queued recent regeneration (last 2 weeks)"
+      assert Repo.get!(RawSource, recent_processed.id).status == "pending"
+      assert Repo.get!(RawSource, old_processed.id).status == "processed"
     end
   end
 
