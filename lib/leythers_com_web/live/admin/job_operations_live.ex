@@ -121,7 +121,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="mx-auto px-4 py-6 sm:px-6 xl:px-8 2xl:max-w-screen-2xl" id="job-operations-page">
+      <div class="mx-auto px-4 py-6 sm:px-6 xl:px-8" id="job-operations-page">
         <%!-- Header --%>
         <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -324,59 +324,64 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
           </div>
         </div>
 
-        <%!-- Detail panel --%>
-        <div
-          class="mt-5 rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm"
-          id="job-detail"
-        >
-          <h2 class="text-lg font-semibold">Diagnostics</h2>
+        <%!-- Detail modal (popover) --%>
+        <%= if not is_nil(@selected_job_detail) do %>
+          <%!-- Backdrop --%>
+          <div
+            id="detail-modal-backdrop"
+            class="fixed inset-0 z-40 bg-black/30"
+            phx-click={JS.patch(jobs_path(@query_params, %{job_id: nil}))}
+          >
+          </div>
 
-          <%= if is_nil(@selected_job_detail) do %>
-            <p class="mt-2 text-sm text-base-content/60">
-              Click Details on any job to inspect source inputs, decisions, and LLM diagnostics.
-            </p>
-          <% else %>
-            <div
-              class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm"
-              id="selected-job-meta"
-            >
-              <span class="font-mono text-base-content/70">
-                Job ##{@selected_job_detail.job.id}
-              </span>
-              <span class="text-base-content/30">·</span>
-              <span class="text-base-content/70">{@selected_job_detail.job.worker}</span>
-              <span class="text-base-content/30">·</span>
-              <span class={[
-                "rounded-full px-2 py-0.5 text-xs font-semibold",
-                state_badge_class(to_string(@selected_job_detail.job.state))
-              ]}>
-                {@selected_job_detail.job.state}
-              </span>
+          <%!-- Modal panel --%>
+          <div
+            class="fixed inset-y-0 right-0 z-50 w-full overflow-y-auto bg-base-100 shadow-2xl sm:max-w-xl md:max-w-2xl"
+            id="job-detail"
+          >
+            <div class="sticky top-0 flex items-center justify-between border-b border-base-300 bg-base-100 px-6 py-4">
+              <div>
+                <h2 class="text-lg font-semibold">Diagnostics</h2>
+                <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-base-content/60">
+                  <span class="font-mono">Job ##{@selected_job_detail.job.id}</span>
+                  <span>·</span>
+                  <span>{@selected_job_detail.job.worker}</span>
+                  <span>·</span>
+                  <span class={[
+                    "rounded-full px-2 py-0.5 text-[11px] font-semibold",
+                    state_badge_class(to_string(@selected_job_detail.job.state))
+                  ]}>
+                    {@selected_job_detail.job.state}
+                  </span>
+                </div>
+              </div>
               <.link
                 patch={jobs_path(@query_params, %{job_id: nil})}
-                class="ml-auto text-xs text-base-content/40 hover:text-base-content"
+                class="ml-4 flex h-8 w-8 items-center justify-center text-base-content/40 hover:text-base-content"
               >
-                Close ×
+                <span class="text-xl">×</span>
               </.link>
             </div>
 
-            <%= if @selected_job_detail.events == [] do %>
-              <p class="mt-4 rounded-xl border border-dashed border-warning/40 bg-warning/10 px-4 py-3 text-sm">
-                No persisted diagnostics events found for this job.
-              </p>
-            <% else %>
-              <div class="mt-4 space-y-5">
-                <%= for event <- @selected_job_detail.events do %>
-                  <%= if ingestion_event?(event) do %>
-                    <.ingestion_event_detail event={event} />
-                  <% else %>
-                    <.editorial_event_detail event={event} />
+            <div class="p-6">
+              <%= if @selected_job_detail.events == [] do %>
+                <p class="rounded-xl border border-dashed border-warning/40 bg-warning/10 px-4 py-3 text-sm">
+                  No persisted diagnostics events found for this job.
+                </p>
+              <% else %>
+                <div class="space-y-5">
+                  <%= for event <- @selected_job_detail.events do %>
+                    <%= if ingestion_event?(event) do %>
+                      <.ingestion_event_detail event={event} />
+                    <% else %>
+                      <.editorial_event_detail event={event} />
+                    <% end %>
                   <% end %>
-                <% end %>
-              </div>
-            <% end %>
-          <% end %>
-        </div>
+                </div>
+              <% end %>
+            </div>
+          </div>
+        <% end %>
       </div>
     </Layouts.app>
     """
