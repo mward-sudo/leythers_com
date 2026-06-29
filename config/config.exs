@@ -66,6 +66,15 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# Configure Oban
+config :leythers_com, Oban,
+  repo: LeythersCom.Repo,
+  plugins: [Oban.Plugins.Pruner],
+  queues: [default: 10, ingestion: 5, intelligence: 2]
+
+# Configure Quantum scheduler
+config :leythers_com, LeythersCom.Scheduler, jobs: []
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"
