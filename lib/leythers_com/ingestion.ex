@@ -119,6 +119,56 @@ defmodule LeythersCom.Ingestion do
     %{stale_providers: stale_providers, report: report}
   end
 
+  def refresh_stale_feeds(opts \\ []) do
+    started_at = System.monotonic_time()
+    alert = alert_on_stale_feeds(opts)
+    stale_providers = alert.stale_providers
+    enqueue_fun = opts[:enqueue_fun] || (&enqueue_feed_fetch/1)
+
+    feeds_to_refresh =
+      opts[:feeds] || configured_feeds()
+
+    stale_provider_set = MapSet.new(stale_providers)
+
+    stale_feeds =
+      Enum.filter(feeds_to_refresh, fn feed ->
+        provider = Map.get(feed, :origin_provider) || Map.get(feed, "origin_provider")
+        MapSet.member?(stale_provider_set, provider)
+      end)
+
+    recovery_stats =
+      Enum.reduce(stale_feeds, %{attempted: 0, enqueued: 0, failed: 0}, fn feed, acc ->
+        case enqueue_fun.(feed) do
+          {:ok, _job} ->
+            %{acc | attempted: acc.attempted + 1, enqueued: acc.enqueued + 1}
+
+          _ ->
+            %{acc | attempted: acc.attempted + 1, failed: acc.failed + 1}
+        end
+      end)
+
+    result =
+      if recovery_stats.failed == 0 do
+        :ok
+      else
+        :partial
+      end
+
+    :telemetry.execute(
+      [:leythers_com, :ingestion, :feed_stale_recovery, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      %{
+        result: result,
+        stale_count: length(stale_providers),
+        attempted: recovery_stats.attempted,
+        enqueued: recovery_stats.enqueued,
+        failed: recovery_stats.failed
+      }
+    )
+
+    Map.merge(alert, recovery_stats)
+  end
+
   def feed_freshness_report(opts \\ []) do
     started_at = System.monotonic_time()
     origin_providers = opts[:origin_providers] || configured_origin_providers()
@@ -163,11 +213,14 @@ defmodule LeythersCom.Ingestion do
   defp blank?(value), do: value in [nil, ""]
 
   defp configured_origin_providers do
-    :leythers_com
-    |> Application.get_env(:ingestion_feeds, [])
+    configured_feeds()
     |> Enum.map(&(Map.get(&1, :origin_provider) || Map.get(&1, "origin_provider")))
     |> Enum.reject(&blank?/1)
     |> Enum.uniq()
+  end
+
+  defp configured_feeds do
+    Application.get_env(:leythers_com, :ingestion_feeds, [])
   end
 
   defp stale_after_hours do

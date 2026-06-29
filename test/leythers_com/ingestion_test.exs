@@ -279,4 +279,68 @@ defmodule LeythersCom.IngestionTest do
       assert metadata.stale_providers == ["missing_provider"]
     end
   end
+
+  describe "refresh_stale_feeds/1" do
+    test "enqueues only feeds for stale providers and emits recovery telemetry" do
+      {:ok, _fresh_source} =
+        Ingestion.create_raw_source(%{
+          title: "Recent source for recovery",
+          url: "https://example.com/recovery-fresh-source",
+          origin_provider: "fresh_provider",
+          external_published_at: DateTime.utc_now()
+        })
+
+      handler_id = "ingestion-stale-recovery-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:leythers_com, :ingestion, :feed_stale_recovery, :stop],
+          fn event, measurements, metadata, test_pid ->
+            send(test_pid, {:telemetry_event, event, measurements, metadata})
+          end,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      enqueue_fun = fn feed ->
+        provider = Map.get(feed, :origin_provider) || Map.get(feed, "origin_provider")
+        send(self(), {:enqueued_provider, provider})
+        {:ok, :queued}
+      end
+
+      feeds = [
+        %{url: "https://example.com/fresh-feed.xml", origin_provider: "fresh_provider"},
+        %{url: "https://example.com/stale-feed.xml", origin_provider: "stale_provider"}
+      ]
+
+      result =
+        Ingestion.refresh_stale_feeds(
+          origin_providers: ["fresh_provider", "stale_provider"],
+          stale_after_hours: 1,
+          feeds: feeds,
+          enqueue_fun: enqueue_fun
+        )
+
+      assert result.stale_providers == ["stale_provider"]
+      assert result.attempted == 1
+      assert result.enqueued == 1
+      assert result.failed == 0
+
+      assert_receive {:enqueued_provider, "stale_provider"}
+      refute_receive {:enqueued_provider, "fresh_provider"}
+
+      assert_receive {:telemetry_event, [:leythers_com, :ingestion, :feed_stale_recovery, :stop],
+                      measurements, metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :ok
+      assert metadata.stale_count == 1
+      assert metadata.attempted == 1
+      assert metadata.enqueued == 1
+      assert metadata.failed == 0
+    end
+  end
 end
