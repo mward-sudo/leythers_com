@@ -205,7 +205,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       {:ok, view, html} = live(conn, ~p"/admin/jobs")
 
       assert html =~ "RSS Feed Ingestion"
-      assert html =~ "sources"
+      assert html =~ "Feed Ingestion"
     end
 
     test "regenerates all processed sources from admin controls", %{conn: conn} do

@@ -264,8 +264,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   defp process_card(assigns) do
     ~H"""
-    <div class="rounded-2xl border border-base-300 bg-base-100 shadow-sm transition-all" id={"process-#{@process.process_run_id}"}>
+    <div class="rounded-2xl border border-base-300 bg-base-100 shadow-sm transition-all">
       <button
+        id={"process-#{@process.process_run_id}"}
         type="button"
         class="w-full px-5 py-4 text-left hover:bg-base-200/30"
         phx-click="expand_process"

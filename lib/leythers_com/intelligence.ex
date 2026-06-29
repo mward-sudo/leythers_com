@@ -483,24 +483,7 @@ defmodule LeythersCom.Intelligence do
 
     case first_event.worker do
       "LeythersCom.Ingestion.FetchRssFeedWorker" ->
-        case first_event.source_ids do
-          [source_id | _] ->
-            source_id_uuid = Ecto.UUID.dump(source_id)
-
-            case source_id_uuid do
-              {:ok, id} ->
-                case Repo.get_by(LeythersCom.Content.RawSource, id: id) do
-                  nil -> {:ingestion, "RSS Feed Ingestion"}
-                  source -> {:ingestion, "RSS Feed: #{source.feed_name}"}
-                end
-
-              :error ->
-                {:ingestion, "RSS Feed Ingestion"}
-            end
-
-          _ ->
-            {:ingestion, "RSS Feed Ingestion"}
-        end
+        {:ingestion, "RSS Feed Ingestion"}
 
       "LeythersCom.Intelligence.SourceEditorialWorker" ->
         source_count = Enum.count(events, &(not Enum.empty?(&1.source_ids)))
