@@ -633,12 +633,28 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             "origin_provider" => source.origin_provider,
             "title" => source.title,
             "url" => source.url,
-            "inserted_at" => source.inserted_at,
-            "external_published_at" => source.external_published_at
+            "inserted_at" => format_dt(source.inserted_at),
+            "external_published_at" => format_dt(source.external_published_at)
           }
         end)
     }
   end
+
+  defp format_dt(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp format_dt(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_iso8601(ndt)
+  defp format_dt(nil), do: nil
+
+  defp json_safe(%Decimal{} = d), do: Decimal.to_string(d)
+  defp json_safe(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp json_safe(%NaiveDateTime{} = ndt), do: NaiveDateTime.to_iso8601(ndt)
+  defp json_safe(%Date{} = d), do: Date.to_iso8601(d)
+
+  defp json_safe(map) when is_map(map) do
+    Map.new(map, fn {k, v} -> {to_string(k), json_safe(v)} end)
+  end
+
+  defp json_safe(list) when is_list(list), do: Enum.map(list, &json_safe/1)
+  defp json_safe(value), do: value
 
   defp persist_job_effect_event(
          job,
@@ -670,9 +686,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         decision_action: decision_action,
         permanent_article_id: permanent_article_id,
         source_ids: source_ids,
-        source_input_snapshot: source_input_snapshot,
+        source_input_snapshot: json_safe(source_input_snapshot),
         change_summary: change_summary,
-        change_details: change_details,
+        change_details: json_safe(change_details),
         error_summary: error_summary
       })
 
