@@ -20,92 +20,192 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
   describe "index" do
     setup :register_and_log_in_user
 
-    test "renders all three job columns simultaneously", %{conn: conn} do
-      executing =
-        create_job("executing", "LeythersCom.Intelligence.SourceEditorialWorker", "intelligence")
-
-      scheduled = create_job("scheduled", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
-
+    test "renders process timeline view", %{conn: conn} do
       {:ok, view, html} = live(conn, ~p"/admin/jobs")
 
       assert html =~ "Job Operations"
-      assert has_element?(view, "#col-active")
-      assert has_element?(view, "#col-queued")
-      assert has_element?(view, "#col-terminal")
-      assert has_element?(view, "#job-card-#{executing.id}")
-      assert has_element?(view, "#job-card-#{scheduled.id}")
+      assert html =~ "Ingestion runs and editorial reviews"
+      assert has_element?(view, "#process-timeline")
     end
 
-    test "shows persisted diagnostics in the drill-down pane", %{conn: conn} do
-      completed =
-        create_job("completed", "LeythersCom.Intelligence.SourceEditorialWorker", "intelligence")
+    test "shows empty state when no processes exist", %{conn: conn} do
+      {:ok, _view, html} = live(conn, ~p"/admin/jobs")
 
-      assert {:ok, _event} =
-               Intelligence.create_job_effect_event(%{
-                 oban_job_id: completed.id,
-                 worker: "LeythersCom.Intelligence.SourceEditorialWorker",
-                 queue: "intelligence",
-                 state: "completed",
-                 attempt: 1,
-                 decision_action: "created",
-                 source_ids: [Ecto.UUID.generate()],
-                 source_input_snapshot: %{
-                   "sources" => [
-                     %{
-                       "headline" => "Leigh derby update",
-                       "url" => "https://example.com/derby",
-                       "excerpt" => "Leigh push on with momentum."
-                     }
-                   ]
-                 },
-                 change_summary: "created article",
-                 change_details: %{outcome: "created", target_article_identifier: "test-123"}
-               })
+      assert html =~ "No processes yet"
+      assert html =~ "Ingestion runs and editorial reviews will appear here"
+    end
+
+    test "displays processes with their events", %{conn: conn} do
+      process_run_id = Ecto.UUID.generate()
+
+      job =
+        create_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      {:ok, _event} =
+        Intelligence.create_job_effect_event(%{
+          oban_job_id: job.id,
+          worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+          queue: "intelligence",
+          state: "completed",
+          attempt: 1,
+          decision_action: "created",
+          process_run_id: process_run_id,
+          source_ids: [Ecto.UUID.generate()],
+          source_input_snapshot: %{
+            "sources" => [
+              %{
+                "headline" => "Test Article",
+                "url" => "https://example.com/test",
+                "excerpt" => "A test article excerpt."
+              }
+            ]
+          },
+          change_summary: "created article",
+          change_details: %{outcome: "created"}
+        })
+
+      {:ok, view, html} = live(conn, ~p"/admin/jobs")
+
+      assert html =~ "Editorial Review:"
+      assert html =~ "sources"
+    end
+
+    test "supports process expansion and event display", %{conn: conn} do
+      process_run_id = Ecto.UUID.generate()
+
+      job =
+        create_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      {:ok, event} =
+        Intelligence.create_job_effect_event(%{
+          oban_job_id: job.id,
+          worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+          queue: "intelligence",
+          state: "completed",
+          attempt: 1,
+          decision_action: "created",
+          process_run_id: process_run_id,
+          source_ids: [Ecto.UUID.generate()],
+          source_input_snapshot: %{
+            "sources" => [
+              %{
+                "headline" => "Expanded Event",
+                "url" => "https://example.com/expanded",
+                "excerpt" => "Event detail text."
+              }
+            ]
+          },
+          change_summary: "created article",
+          change_details: %{outcome: "created"}
+        })
 
       {:ok, view, _html} = live(conn, ~p"/admin/jobs")
 
-      html =
-        view
-        |> element("#job-card-#{completed.id}")
-        |> render_click()
+      # Expand process
+      view
+      |> element("#process-#{process_run_id}")
+      |> render_click()
 
-      assert html =~ "Job #"
-      assert html =~ "https://example.com/derby"
-      assert html =~ "target_article_identifier"
+      html = render(view)
+      assert html =~ "Events"
+      assert html =~ "Editorial Review"
+
+      # Click event to show detail modal
+      view
+      |> element("#event-btn-#{event.id}")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Event Details"
+      assert html =~ "https://example.com/expanded"
     end
 
-    test "supports pagination for terminal jobs", %{conn: conn} do
-      for _ <- 1..21 do
-        _ =
+    test "supports pagination for processes", %{conn: conn} do
+      # Create multiple processes with events
+      for i <- 1..21 do
+        process_run_id = Ecto.UUID.generate()
+
+        job =
           create_job(
             "completed",
             "LeythersCom.Intelligence.SourceEditorialWorker",
             "intelligence"
           )
+
+        {:ok, _event} =
+          Intelligence.create_job_effect_event(%{
+            oban_job_id: job.id,
+            worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+            queue: "intelligence",
+            state: "completed",
+            attempt: 1,
+            decision_action: "created",
+            process_run_id: process_run_id,
+            source_ids: [Ecto.UUID.generate()],
+            source_input_snapshot: %{},
+            change_summary: "created article #{i}",
+            change_details: %{outcome: "created"}
+          })
       end
 
-      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+      {:ok, view, html} = live(conn, ~p"/admin/jobs")
 
-      assert render(view) =~ "1 / 2"
+      assert html =~ "Page 1 of 2"
 
+      # Go to next page
       view
-      |> element("#terminal-pagination a", "Next →")
+      |> element("a", "Next")
       |> render_click()
 
-      assert render(view) =~ "2 / 2"
+      html = render(view)
+      assert html =~ "Page 2 of 2"
     end
 
-    test "refreshes in real time when job operations update message is received", %{conn: conn} do
-      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+    test "shows ingestion process details", %{conn: conn} do
+      process_run_id = Ecto.UUID.generate()
 
-      assert has_element?(view, "#col-active")
+      job =
+        create_job("completed", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
 
-      executing =
-        create_job("executing", "LeythersCom.Intelligence.SourceEditorialWorker", "intelligence")
+      {:ok, _event} =
+        Intelligence.create_job_effect_event(%{
+          oban_job_id: job.id,
+          worker: "LeythersCom.Ingestion.FetchRssFeedWorker",
+          queue: "ingestion",
+          state: "completed",
+          attempt: 1,
+          decision_action: "created",
+          process_run_id: process_run_id,
+          source_ids: [Ecto.UUID.generate()],
+          source_input_snapshot: %{
+            "feed" => %{
+              "url" => "https://example.com/rss",
+              "origin_provider" => "RSS Feed"
+            },
+            "items" => [
+              %{
+                "title" => "New Article",
+                "url" => "https://example.com/article",
+                "status" => "new"
+              }
+            ]
+          },
+          change_summary: "fetched feed",
+          change_details: %{inserted: 1, seen: 0, errors: 0}
+        })
 
-      send(view.pid, {:job_operations, :updated})
+      {:ok, view, html} = live(conn, ~p"/admin/jobs")
 
-      assert has_element?(view, "#job-card-#{executing.id}")
+      assert html =~ "RSS Feed Ingestion"
+      assert html =~ "sources"
     end
 
     test "regenerates all processed sources from admin controls", %{conn: conn} do
@@ -149,7 +249,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
           external_published_at: DateTime.utc_now()
         })
 
-      _ = recent_processed |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+      _ =
+        recent_processed |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
 
       {:ok, old_processed} =
         Ingestion.create_raw_source(%{
@@ -170,6 +271,43 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert render(view) =~ "Queued recent regeneration (last 2 weeks)"
       assert Repo.get!(RawSource, recent_processed.id).status == "pending"
       assert Repo.get!(RawSource, old_processed.id).status == "processed"
+    end
+
+    test "refreshes in real time when job operations update message is received", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+
+      assert render(view) =~ "No processes yet"
+
+      process_run_id = Ecto.UUID.generate()
+
+      job =
+        create_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      {:ok, _event} =
+        Intelligence.create_job_effect_event(%{
+          oban_job_id: job.id,
+          worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+          queue: "intelligence",
+          state: "completed",
+          attempt: 1,
+          decision_action: "created",
+          process_run_id: process_run_id,
+          source_ids: [Ecto.UUID.generate()],
+          source_input_snapshot: %{},
+          change_summary: "created article",
+          change_details: %{outcome: "created"}
+        })
+
+      send(view.pid, {:job_operations, :updated})
+
+      html = render(view)
+      assert html =~ "Editorial Review:"
     end
   end
 

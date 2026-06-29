@@ -1,7 +1,8 @@
 defmodule LeythersComWeb.Admin.JobOperationsLive do
   @moduledoc """
-  Authenticated admin panel showing all job buckets simultaneously with
-  live updates, compact card layout, and per-job diagnostics drill-down.
+  Authenticated admin panel showing process-centric job operations timeline.
+  Processes are top-level items (ingestion runs, editorial reviews) with drill-down
+  to individual events and full LLM prompt/output visibility.
   """
 
   use LeythersComWeb, :live_view
@@ -12,17 +13,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   @default_page 1
   @per_page 20
-  @time_window_options [
-    {"Any time", ""},
-    {"Last 24h", "24"},
-    {"Last 72h", "72"},
-    {"Last 7d", "168"}
-  ]
 
   @impl true
   def mount(_params, _session, socket) do
-    filter_options = Intelligence.job_operations_filter_options()
-
     if connected?(socket) do
       Phoenix.PubSub.subscribe(LeythersCom.PubSub, JobOperationsUpdates.topic())
     end
@@ -30,16 +23,11 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     {:ok,
      socket
      |> assign(:page_title, "Job Operations")
-     |> assign(:filter_options, filter_options)
-     |> assign(:time_window_options, @time_window_options)
      |> assign(:query_params, %{})
-     |> assign(:filters, default_filters())
-     |> assign(:active_jobs, [])
-     |> assign(:queued_jobs, [])
-     |> assign(:terminal_page, empty_page())
-     |> assign(:bucket_counts, %{active: 0, queued: 0, terminal: 0})
-     |> assign(:selected_job_detail, nil)
-     |> assign(:filters_form, to_form(default_filters(), as: :filters))}
+     |> assign(:processes_page, empty_page())
+     |> assign(:expanded_process_id, nil)
+     |> assign(:selected_event_id, nil)
+     |> assign(:selected_event, nil)}
   end
 
   @impl true
@@ -54,44 +42,51 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   defp load_page(socket, params) do
     page = parse_positive_int(params["page"], @default_page)
-    filters = normalize_filters(params)
-    terminal_opts = Map.merge(filters, %{page: page, per_page: @per_page})
+    opts = %{page: page, per_page: @per_page}
 
-    active_jobs = Intelligence.list_jobs_by_bucket(:active, filters)
-    queued_jobs = Intelligence.list_jobs_by_bucket(:queued, filters)
-    terminal_page = Intelligence.list_job_operations_jobs("terminal", terminal_opts)
-    bucket_counts = Intelligence.job_operations_bucket_counts(filters)
+    processes_page = Intelligence.list_processes(opts)
 
-    selected_job_detail =
-      params
-      |> Map.get("job_id")
-      |> parse_positive_int(nil)
-      |> case do
-        nil -> nil
-        job_id -> Intelligence.job_operations_detail(job_id)
+    expanded_process_id = params["process_id"]
+    process_events = if expanded_process_id, do: Intelligence.process_events(expanded_process_id), else: []
+
+    selected_event_id = params["event_id"]
+
+    selected_event =
+      if selected_event_id do
+        Enum.find(process_events, &(to_string(&1.id) == selected_event_id))
+      else
+        nil
       end
 
     query_params =
       params
-      |> Map.take(["page", "queue", "worker", "state", "time_window_hours", "job_id"])
+      |> Map.take(["page", "process_id", "event_id"])
       |> Enum.reject(fn {_key, value} -> value in [nil, ""] end)
       |> Map.new()
 
     socket
     |> assign(:query_params, query_params)
-    |> assign(:filters, filters)
-    |> assign(:active_jobs, active_jobs)
-    |> assign(:queued_jobs, queued_jobs)
-    |> assign(:terminal_page, terminal_page)
-    |> assign(:bucket_counts, bucket_counts)
-    |> assign(:selected_job_detail, selected_job_detail)
-    |> assign(:filters_form, to_form(filters, as: :filters))
+    |> assign(:processes_page, processes_page)
+    |> assign(:expanded_process_id, expanded_process_id)
+    |> assign(:process_events, process_events)
+    |> assign(:selected_event_id, selected_event_id)
+    |> assign(:selected_event, selected_event)
   end
 
   @impl true
-  def handle_event("apply_filters", %{"filters" => filters}, socket) do
-    params = filters |> normalize_filters() |> Map.put("page", "1")
-    {:noreply, push_patch(socket, to: ~p"/admin/jobs?#{params}")}
+  def handle_event("expand_process", %{"process_id" => process_id}, socket) do
+    {:noreply, push_patch(socket, to: ~p"/admin/jobs?process_id=#{process_id}")}
+  end
+
+  @impl true
+  def handle_event("collapse_process", _params, socket) do
+    {:noreply, push_patch(socket, to: ~p"/admin/jobs")}
+  end
+
+  @impl true
+  def handle_event("show_event", %{"event_id" => event_id}, socket) do
+    process_id = socket.assigns.expanded_process_id
+    {:noreply, push_patch(socket, to: ~p"/admin/jobs?process_id=#{process_id}&event_id=#{event_id}")}
   end
 
   @impl true
@@ -123,22 +118,24 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="w-full px-4 py-6 sm:px-6 xl:px-8" id="job-operations-page">
         <%!-- Header --%>
-        <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
-            <h1 class="text-2xl font-semibold tracking-tight">Job Operations</h1>
-            <p class="mt-0.5 text-sm text-base-content/60">
-              All buckets · live updates · click any job to inspect diagnostics
+            <h1 class="text-2xl font-bold tracking-tight">Job Operations</h1>
+            <p class="mt-1 text-sm text-base-content/60">
+              Ingestion runs and editorial reviews · click to drill down
             </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-            <.link navigate={~p"/admin/overview"} class="btn btn-outline btn-sm">Overview</.link>
+            <.link navigate={~p"/admin/overview"} class="btn btn-outline btn-sm">
+              <.icon name="hero-arrow-left" class="h-4 w-4" /> Overview
+            </.link>
             <button
               id="regenerate-recent-button"
               type="button"
               class="btn btn-outline btn-sm"
               phx-click="regenerate-recent"
             >
-              Regen Recent
+              <.icon name="hero-arrow-path" class="h-4 w-4" /> Regen Recent
             </button>
             <button
               id="regenerate-all-button"
@@ -146,238 +143,109 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
               class="btn btn-primary btn-sm"
               phx-click="regenerate-all"
             >
-              Regen All
+              <.icon name="hero-arrow-path" class="h-4 w-4" /> Regen All
             </button>
             <.link navigate={~p"/admin/articles/new"} class="btn btn-primary btn-soft btn-sm">
-              Manual Publish
+              <.icon name="hero-plus" class="h-4 w-4" /> Publish
             </.link>
           </div>
         </div>
 
-        <%!-- Filters --%>
-        <div
-          class="rounded-2xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm"
-          id="job-filters"
-        >
-          <.form for={@filters_form} id="job-filters-form" phx-change="apply_filters">
-            <div class="flex flex-wrap items-end gap-3">
-              <div class="w-36">
-                <.input
-                  field={@filters_form[:queue]}
-                  type="select"
-                  label="Queue"
-                  options={[{"All queues", ""} | Enum.map(@filter_options.queues, &{&1, &1})]}
-                />
+        <%!-- Process Timeline --%>
+        <div class="space-y-3" id="process-timeline">
+          <%= if @processes_page.entries == [] do %>
+            <div class="rounded-2xl border-2 border-dashed border-base-300 bg-base-100/50 px-6 py-12 text-center">
+              <div class="text-base-content/40">
+                <.icon name="hero-check-circle" class="mx-auto h-12 w-12 opacity-30" />
               </div>
-              <div class="w-36">
-                <.input
-                  field={@filters_form[:state]}
-                  type="select"
-                  label="State"
-                  options={[{"All states", ""} | Enum.map(@filter_options.states, &{&1, &1})]}
-                />
-              </div>
-              <div class="w-36">
-                <.input
-                  field={@filters_form[:time_window_hours]}
-                  type="select"
-                  label="Time window"
-                  options={@time_window_options}
-                />
-              </div>
-              <div class="w-52">
-                <.input
-                  field={@filters_form[:worker]}
-                  type="text"
-                  label="Worker"
-                  placeholder="e.g. SourceEditorialWorker"
-                />
-              </div>
-              <%= if filters_active?(@filters) do %>
-                <.link
-                  patch={~p"/admin/jobs"}
-                  id="clear-filters-link"
-                  class="mb-1 text-xs text-primary underline underline-offset-2"
-                >
-                  Clear filters
-                </.link>
-              <% end %>
+              <p class="mt-2 text-sm font-medium text-base-content/60">No processes yet</p>
+              <p class="mt-1 text-xs text-base-content/40">
+                Ingestion runs and editorial reviews will appear here as they execute.
+              </p>
             </div>
-          </.form>
+          <% else %>
+            <%= for process <- @processes_page.entries do %>
+              <.process_card
+                process={process}
+                expanded={@expanded_process_id == process.process_run_id}
+                events={@process_events}
+                selected_event_id={@selected_event_id}
+              />
+            <% end %>
+
+            <%!-- Pagination --%>
+            <div class="mt-6 flex items-center justify-center gap-3">
+              <.link
+                patch={
+                  jobs_path(@query_params, %{
+                    page: to_string(max(@processes_page.page - 1, 1)),
+                    process_id: nil,
+                    event_id: nil
+                  })
+                }
+                class={[
+                  "btn btn-sm btn-outline",
+                  @processes_page.page <= 1 && "btn-disabled pointer-events-none opacity-50"
+                ]}
+              >
+                <.icon name="hero-chevron-left" class="h-4 w-4" /> Previous
+              </.link>
+              <span class="text-sm text-base-content/60">
+                Page {@processes_page.page} of {@processes_page.total_pages}
+              </span>
+              <.link
+                patch={
+                  jobs_path(@query_params, %{
+                    page: to_string(min(@processes_page.page + 1, @processes_page.total_pages)),
+                    process_id: nil,
+                    event_id: nil
+                  })
+                }
+                class={[
+                  "btn btn-sm btn-outline",
+                  @processes_page.page >= @processes_page.total_pages &&
+                    "btn-disabled pointer-events-none opacity-50"
+                ]}
+              >
+                Next <.icon name="hero-chevron-right" class="h-4 w-4" />
+              </.link>
+            </div>
+          <% end %>
         </div>
 
-        <%!-- Job columns (stacked) --%>
-        <div class="mt-5 grid gap-4" id="job-columns">
-          <%!-- Active --%>
-          <div class="rounded-2xl border border-base-300 bg-base-100 p-4 shadow-sm" id="col-active">
-            <div class="mb-3 flex items-center gap-2">
-              <span class="h-2 w-2 animate-pulse rounded-full bg-blue-500"></span>
-              <h2 class="font-semibold">Active</h2>
-              <span class="ml-auto rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-700">
-                {@bucket_counts.active}
-              </span>
-            </div>
-            <%= if @active_jobs == [] do %>
-              <p class="rounded-lg border border-dashed border-base-300 px-3 py-6 text-center text-xs text-base-content/50">
-                No active jobs
-              </p>
-            <% else %>
-              <div class="space-y-2">
-                <%= for job <- @active_jobs do %>
-                  <.job_card
-                    job={job}
-                    params={@query_params}
-                    selected={job_selected?(@selected_job_detail, job.id)}
-                  />
-                <% end %>
-              </div>
-            <% end %>
-          </div>
-
-          <%!-- Queued --%>
-          <div class="rounded-2xl border border-base-300 bg-base-100 p-4 shadow-sm" id="col-queued">
-            <div class="mb-3 flex items-center gap-2">
-              <span class="h-2 w-2 rounded-full bg-amber-400"></span>
-              <h2 class="font-semibold">Queued</h2>
-              <span class="ml-auto rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">
-                {@bucket_counts.queued}
-              </span>
-            </div>
-            <%= if @queued_jobs == [] do %>
-              <p class="rounded-lg border border-dashed border-base-300 px-3 py-6 text-center text-xs text-base-content/50">
-                No queued jobs
-              </p>
-            <% else %>
-              <div class="space-y-2">
-                <%= for job <- @queued_jobs do %>
-                  <.job_card
-                    job={job}
-                    params={@query_params}
-                    selected={job_selected?(@selected_job_detail, job.id)}
-                  />
-                <% end %>
-              </div>
-            <% end %>
-          </div>
-
-          <%!-- Terminal --%>
+        <%!-- Event Detail Modal --%>
+        <%= if not is_nil(@selected_event) do %>
           <div
-            class="rounded-2xl border border-base-300 bg-base-100 p-4 shadow-sm"
-            id="col-terminal"
-          >
-            <div class="mb-3 flex items-center gap-2">
-              <span class="h-2 w-2 rounded-full bg-base-400"></span>
-              <h2 class="font-semibold">Completed / Terminal</h2>
-              <span class="ml-auto rounded-full bg-base-200 px-2 py-0.5 text-xs font-semibold text-base-content/60">
-                {@bucket_counts.terminal}
-              </span>
-            </div>
-            <%= if @terminal_page.entries == [] do %>
-              <p class="rounded-lg border border-dashed border-base-300 px-3 py-6 text-center text-xs text-base-content/50">
-                No completed jobs
-              </p>
-            <% else %>
-              <div class="space-y-2">
-                <%= for job <- @terminal_page.entries do %>
-                  <.job_card
-                    job={job}
-                    params={@query_params}
-                    selected={job_selected?(@selected_job_detail, job.id)}
-                  />
-                <% end %>
-              </div>
-              <div class="mt-3 flex items-center justify-between" id="terminal-pagination">
-                <.link
-                  patch={
-                    jobs_path(@query_params, %{
-                      page: to_string(max(@terminal_page.page - 1, 1)),
-                      job_id: nil
-                    })
-                  }
-                  class={[
-                    "btn btn-xs btn-outline",
-                    @terminal_page.page <= 1 && "btn-disabled pointer-events-none opacity-50"
-                  ]}
-                >
-                  ← Prev
-                </.link>
-                <span class="text-xs text-base-content/60">
-                  {@terminal_page.page} / {@terminal_page.total_pages}
-                </span>
-                <.link
-                  patch={
-                    jobs_path(@query_params, %{
-                      page: to_string(min(@terminal_page.page + 1, @terminal_page.total_pages)),
-                      job_id: nil
-                    })
-                  }
-                  class={[
-                    "btn btn-xs btn-outline",
-                    @terminal_page.page >= @terminal_page.total_pages &&
-                      "btn-disabled pointer-events-none opacity-50"
-                  ]}
-                >
-                  Next →
-                </.link>
-              </div>
-            <% end %>
-          </div>
-        </div>
-
-        <%!-- Detail modal (popover) --%>
-        <%= if not is_nil(@selected_job_detail) do %>
-          <%!-- Backdrop --%>
-          <div
-            id="detail-modal-backdrop"
+            id="event-detail-backdrop"
             class="fixed inset-0 z-40 bg-black/30"
-            phx-click={JS.patch(jobs_path(@query_params, %{job_id: nil}))}
+            phx-click={JS.patch(jobs_path(@query_params, %{event_id: nil}))}
           >
           </div>
-
-          <%!-- Modal panel --%>
           <div
             class="fixed inset-y-0 right-0 z-50 w-full overflow-y-auto bg-base-100 shadow-2xl sm:max-w-xl md:max-w-2xl"
-            id="job-detail"
+            id="event-detail"
           >
             <div class="sticky top-0 flex items-center justify-between border-b border-base-300 bg-base-100 px-6 py-4">
               <div>
-                <h2 class="text-lg font-semibold">Diagnostics</h2>
+                <h2 class="text-lg font-semibold">Event Details</h2>
                 <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-base-content/60">
-                  <span class="font-mono">Job ##{@selected_job_detail.job.id}</span>
+                  <span>Event #{String.slice(@selected_event.id, 0..7)}</span>
                   <span>·</span>
-                  <span>{@selected_job_detail.job.worker}</span>
-                  <span>·</span>
-                  <span class={[
-                    "rounded-full px-2 py-0.5 text-[11px] font-semibold",
-                    state_badge_class(to_string(@selected_job_detail.job.state))
-                  ]}>
-                    {@selected_job_detail.job.state}
-                  </span>
+                  <span>{format_datetime(@selected_event.inserted_at)}</span>
                 </div>
               </div>
               <.link
-                patch={jobs_path(@query_params, %{job_id: nil})}
-                class="ml-4 flex h-8 w-8 items-center justify-center text-base-content/40 hover:text-base-content"
+                patch={jobs_path(@query_params, %{event_id: nil})}
+                class="flex h-8 w-8 items-center justify-center text-base-content/40 hover:text-base-content"
               >
-                <span class="text-xl">×</span>
+                <.icon name="hero-x-mark" class="h-5 w-5" />
               </.link>
             </div>
-
             <div class="p-6">
-              <%= if @selected_job_detail.events == [] do %>
-                <p class="rounded-xl border border-dashed border-warning/40 bg-warning/10 px-4 py-3 text-sm">
-                  No persisted diagnostics events found for this job.
-                </p>
+              <%= if ingestion_event?(@selected_event) do %>
+                <.ingestion_event_detail event={@selected_event} />
               <% else %>
-                <div class="space-y-5">
-                  <%= for event <- @selected_job_detail.events do %>
-                    <%= if ingestion_event?(event) do %>
-                      <.ingestion_event_detail event={event} />
-                    <% else %>
-                      <.editorial_event_detail event={event} />
-                    <% end %>
-                  <% end %>
-                </div>
+                <.editorial_event_detail event={@selected_event} />
               <% end %>
             </div>
           </div>
@@ -387,47 +255,113 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     """
   end
 
-  # ── Job card ──────────────────────────────────────────────────────────────────
+  # ── Process Card ──────────────────────────────────────────────────────────────
 
-  attr :job, :map, required: true
-  attr :params, :map, required: true
-  attr :selected, :boolean, default: false
+  attr :process, :map, required: true
+  attr :expanded, :boolean, default: false
+  attr :events, :list, default: []
+  attr :selected_event_id, :string, default: nil
 
-  defp job_card(assigns) do
+  defp process_card(assigns) do
     ~H"""
-    <.link
-      patch={jobs_path(@params, %{job_id: to_string(@job.id)})}
-      id={"job-card-#{@job.id}"}
-      class={[
-        "block rounded-lg border px-3 py-2.5 transition-colors cursor-pointer",
-        @selected && "border-primary bg-primary/5",
-        not @selected && "border-base-300 hover:border-base-400/60 hover:bg-base-200/30"
-      ]}
-    >
-      <div class="flex items-start gap-2">
-        <div class="min-w-0 flex-1">
-          <div class="flex flex-wrap items-center gap-1.5">
-            <span class={[
-              "rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
-              state_badge_class(to_string(@job.state))
-            ]}>
-              {@job.state}
-            </span>
-            <span class="text-[11px] text-base-content/50">{@job.queue}</span>
+    <div class="rounded-2xl border border-base-300 bg-base-100 shadow-sm transition-all" id={"process-#{@process.process_run_id}"}>
+      <button
+        type="button"
+        class="w-full px-5 py-4 text-left hover:bg-base-200/30"
+        phx-click="expand_process"
+        phx-value-process_id={@process.process_run_id}
+      >
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2">
+              <.icon
+                name={
+                  case @process.process_type do
+                    :ingestion -> "hero-arrow-down-tray"
+                    :editorial -> "hero-pencil-square"
+                    _ -> "hero-cog"
+                  end
+                }
+                class="h-5 w-5 flex-shrink-0"
+              />
+              <h3 class="text-base font-semibold">{@process.process_name}</h3>
+              <span class={[
+                "ml-auto inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium",
+                case @process.status do
+                  :running -> "bg-blue-100 text-blue-700"
+                  :completed -> "bg-green-100 text-green-700"
+                  :failed -> "bg-red-100 text-red-700"
+                  :discarded -> "bg-orange-100 text-orange-700"
+                  _ -> "bg-base-200 text-base-content/60"
+                end
+              ]}>
+                {atom_to_status_text(@process.status)}
+              </span>
+            </div>
+            <p class="mt-2 text-xs text-base-content/60">
+              {format_datetime(@process.started_at)} · {@process.event_count} event(s)
+            </p>
           </div>
-          <p class="mt-1 text-sm font-medium leading-snug">
-            {worker_short_name(@job.worker)}
-          </p>
-          <p class="mt-0.5 text-[11px] text-base-content/50">
-            attempt {@job.attempt} · {format_datetime(@job.inserted_at)}
-          </p>
+          <div class="flex items-center gap-1 text-base-content/40">
+            <.icon name="hero-chevron-down" class={["h-5 w-5 transition-transform", @expanded && "rotate-180"]} />
+          </div>
         </div>
-      </div>
-    </.link>
+      </button>
+
+      <%= if @expanded && @events != [] do %>
+        <div class="border-t border-base-300 px-5 py-4 bg-base-200/20">
+          <div class="mb-3 space-y-2">
+            <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/60">
+              Events ({Enum.count(@events)})
+            </h4>
+            <div class="space-y-1.5">
+              <%= for event <- @events do %>
+                <button
+                  type="button"
+                  class={[
+                    "w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
+                    @selected_event_id == to_string(event.id) &&
+                      "bg-primary/10 border border-primary text-primary-focus",
+                    @selected_event_id != to_string(event.id) &&
+                      "border border-base-300 hover:bg-base-100"
+                  ]}
+                  phx-click="show_event"
+                  phx-value-event_id={event.id}
+                  id={"event-btn-#{event.id}"}
+                >
+                  <div class="flex items-start justify-between gap-2">
+                    <div>
+                      <p class="font-medium">
+                        {if(ingestion_event?(event), do: "Feed Ingestion", else: "Editorial Review")}
+                      </p>
+                      <p class="text-xs text-base-content/60 mt-0.5">
+                        {format_datetime(event.inserted_at)}
+                      </p>
+                    </div>
+                    <span class={[
+                      "flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                      case event.state do
+                        "completed" -> "bg-green-100 text-green-700"
+                        "executing" -> "bg-blue-100 text-blue-700"
+                        "retryable" -> "bg-orange-100 text-orange-700"
+                        "discarded" -> "bg-red-100 text-red-700"
+                        _ -> "bg-base-200 text-base-content/60"
+                      end
+                    ]}>
+                      {event.state}
+                    </span>
+                  </div>
+                </button>
+              <% end %>
+            </div>
+          </div>
+        </div>
+      <% end %>
+    </div>
     """
   end
 
-  # ── Ingestion event ───────────────────────────────────────────────────────────
+  # ── Ingestion Event Detail ────────────────────────────────────────────────────
 
   attr :event, :map, required: true
 
@@ -446,140 +380,165 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       |> assign(:error_items, Enum.filter(items, &(Map.get(&1, "status") == "error")))
 
     ~H"""
-    <article class="rounded-xl border border-base-300 p-4" id={"job-event-#{@event.id}"}>
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 class="text-sm font-semibold">Feed Ingestion</h3>
-          <p class="break-all text-xs text-base-content/60">
-            {Map.get(@feed, "origin_provider", "(unknown provider)")} · {Map.get(@feed, "url", "")}
-          </p>
-        </div>
-        <p class="shrink-0 text-xs text-base-content/50">{format_datetime(@event.inserted_at)}</p>
+    <div class="space-y-5" id={"ingestion-event-#{@event.id}"}>
+      <div>
+        <h3 class="text-lg font-semibold flex items-center gap-2">
+          <.icon name="hero-arrow-down-tray" class="h-5 w-5" />
+          Feed Ingestion
+        </h3>
+        <p class="mt-2 break-all text-sm text-base-content/70">
+          <span class="font-medium">{Map.get(@feed, "origin_provider", "(unknown)")}</span> · {Map.get(@feed, "url", "(no URL)")}
+        </p>
       </div>
 
-      <div class="mt-3 flex flex-wrap gap-2">
-        <span class="rounded-full bg-success/15 px-2.5 py-1 text-xs font-medium text-success">
-          {Map.get(@details, "inserted", length(@new_items))} new
-        </span>
-        <span class="rounded-full bg-base-300/70 px-2.5 py-1 text-xs font-medium text-base-content/60">
-          {Map.get(@details, "seen", length(@seen_items))} already known
-        </span>
+      <div class="grid grid-cols-3 gap-2">
+        <div class="rounded-lg bg-success/10 px-3 py-2">
+          <p class="text-xs font-medium text-success">{Map.get(@details, "inserted", length(@new_items))} new</p>
+        </div>
+        <div class="rounded-lg bg-base-200 px-3 py-2">
+          <p class="text-xs font-medium text-base-content/60">{Map.get(@details, "seen", length(@seen_items))} seen</p>
+        </div>
         <%= if Map.get(@details, "errors", 0) > 0 do %>
-          <span class="rounded-full bg-error/15 px-2.5 py-1 text-xs font-medium text-error">
-            {Map.get(@details, "errors", 0)} error(s)
-          </span>
-        <% end %>
-        <%= if @event.error_summary do %>
-          <span class="text-xs text-error">{@event.error_summary}</span>
+          <div class="rounded-lg bg-error/10 px-3 py-2">
+            <p class="text-xs font-medium text-error">{Map.get(@details, "errors", 0)} error(s)</p>
+          </div>
+        <% else %>
+          <div class="rounded-lg bg-base-200 px-3 py-2">
+            <p class="text-xs font-medium text-base-content/60">0 errors</p>
+          </div>
         <% end %>
       </div>
+
+      <%= if @event.error_summary do %>
+        <div class="rounded-lg border border-error/30 bg-error/5 px-4 py-3">
+          <p class="text-sm text-error font-medium">Error: {@event.error_summary}</p>
+        </div>
+      <% end %>
 
       <%= if @items != [] do %>
-        <div class="mt-4" id={"feed-items-#{@event.id}"}>
-          <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/50">
-            Items ({length(@items)})
-          </h4>
-          <ul class="mt-2 max-h-72 divide-y divide-base-300/50 overflow-y-auto rounded-xl border border-base-300 bg-base-200/40">
+        <div>
+          <h4 class="text-sm font-semibold mb-3">Items ({length(@items)})</h4>
+          <div class="max-h-96 overflow-y-auto space-y-2">
             <%= for item <- @items do %>
-              <li class="flex items-start gap-3 px-3 py-2">
-                <span class={[
-                  "mt-0.5 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
-                  Map.get(item, "status") == "new" && "bg-success/20 text-success",
-                  Map.get(item, "status") == "seen" && "bg-base-300/60 text-base-content/50",
-                  Map.get(item, "status") == "error" && "bg-error/20 text-error",
-                  Map.get(item, "status") not in ["new", "seen", "error"] &&
-                    "bg-base-300/60 text-base-content/50"
-                ]}>
-                  {Map.get(item, "status", "?")}
-                </span>
-                <div class="min-w-0">
-                  <p class="text-xs font-medium leading-snug">
-                    {Map.get(item, "title", "(no title)")}
-                  </p>
-                  <p class="break-all text-[11px] leading-snug text-base-content/50">
-                    {Map.get(item, "url", "")}
-                  </p>
+              <div class="rounded-lg border border-base-300 bg-base-200/30 px-3 py-2.5">
+                <div class="flex items-start gap-2">
+                  <span class={[
+                    "mt-0.5 flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                    Map.get(item, "status") == "new" && "bg-success/20 text-success",
+                    Map.get(item, "status") == "seen" && "bg-base-300/60 text-base-content/50",
+                    Map.get(item, "status") == "error" && "bg-error/20 text-error"
+                  ]}>
+                    {Map.get(item, "status", "?")}
+                  </span>
+                  <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium break-words">{Map.get(item, "title", "(no title)")}</p>
+                    <p class="text-xs text-base-content/60 break-all mt-1">{Map.get(item, "url", "")}</p>
+                  </div>
                 </div>
-              </li>
+              </div>
             <% end %>
-          </ul>
+          </div>
         </div>
-      <% else %>
-        <p class="mt-3 text-xs italic text-base-content/40">
-          No item detail (job ran before per-item tracking was enabled).
-        </p>
       <% end %>
-    </article>
+    </div>
     """
   end
 
-  # ── Editorial event ───────────────────────────────────────────────────────────
+  # ── Editorial Event Detail ────────────────────────────────────────────────────
 
   attr :event, :map, required: true
 
   defp editorial_event_detail(assigns) do
     ~H"""
-    <article class="rounded-xl border border-base-300 p-4" id={"job-event-#{@event.id}"}>
-      <div class="flex flex-wrap items-center justify-between gap-3">
-        <h3 class="text-sm font-semibold uppercase tracking-wider text-base-content/60">
-          {@event.decision_action}
+    <div class="space-y-5" id={"editorial-event-#{@event.id}"}>
+      <div>
+        <h3 class="text-lg font-semibold flex items-center gap-2">
+          <.icon name="hero-pencil-square" class="h-5 w-5" />
+          Editorial Review
         </h3>
-        <p class="shrink-0 text-xs text-base-content/50">{format_datetime(@event.inserted_at)}</p>
+        <div class="mt-3 grid gap-2 sm:grid-cols-2">
+          <div>
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">Decision</p>
+            <p class="mt-1 text-sm font-semibold text-base-content">{@event.decision_action}</p>
+          </div>
+          <div>
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">State</p>
+            <p class={[
+              "mt-1 text-sm font-semibold rounded-full inline-block px-2.5 py-1 text-xs font-medium",
+              case @event.state do
+                "completed" -> "bg-green-100 text-green-700"
+                "executing" -> "bg-blue-100 text-blue-700"
+                "retryable" -> "bg-orange-100 text-orange-700"
+                "discarded" -> "bg-red-100 text-red-700"
+                _ -> "bg-base-200 text-base-content/60"
+              end
+            ]}>
+              {@event.state}
+            </p>
+          </div>
+        </div>
       </div>
 
-      <p class="mt-2 text-sm">{@event.change_summary || "No change summary"}</p>
-
-      <%= if @event.error_summary do %>
-        <p class="mt-1 text-sm text-error">Error: {@event.error_summary}</p>
+      <%= if @event.change_summary do %>
+        <div>
+          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">Summary</p>
+          <p class="text-sm text-base-content">{@event.change_summary}</p>
+        </div>
       <% end %>
 
-      <div class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <div>
-          <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/50">Sources</h4>
-          <ul class="mt-2 space-y-2 text-xs" id={"source-inputs-#{@event.id}"}>
-            <%= for input <- source_inputs(@event.source_input_snapshot) do %>
-              <li class="rounded-md bg-base-200/70 p-2">
-                <p class="font-medium">
-                  {Map.get(input, "headline", Map.get(input, "title", "(no headline)"))}
-                </p>
-                <p class="mt-0.5 break-all text-base-content/60">
-                  {Map.get(input, "url", "(no url)")}
-                </p>
-                <p class="text-base-content/50">
-                  {Map.get(input, "excerpt", Map.get(input, "summary", ""))}
-                </p>
-              </li>
-            <% end %>
-          </ul>
+      <%= if @event.error_summary do %>
+        <div class="rounded-lg border border-error/30 bg-error/5 px-4 py-3">
+          <p class="text-sm text-error font-medium">Error: {@event.error_summary}</p>
         </div>
+      <% end %>
 
-        <div>
-          <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/50">
-            Decision
-          </h4>
-          <ul class="mt-2 space-y-1.5 text-xs" id={"decision-details-#{@event.id}"}>
-            <li class="rounded-md bg-base-200/70 px-2 py-1">Action: {@event.decision_action}</li>
-            <li class="rounded-md bg-base-200/70 px-2 py-1">State: {@event.state}</li>
-            <li class="rounded-md bg-base-200/70 px-2 py-1">Attempt: {@event.attempt}</li>
-            <li class="rounded-md bg-base-200/70 px-2 py-1">
-              Article: {@event.permanent_article_id || "none"}
-            </li>
-          </ul>
-        </div>
-
-        <div class="sm:col-span-2 lg:col-span-1">
-          <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/50">Details</h4>
-          <pre
-            class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-base-200/70 p-2 text-[11px] leading-5"
-            id={"change-details-#{@event.id}"}
-          >{inspect(@event.change_details, pretty: true, limit: :infinity)}</pre>
+      <div>
+        <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-3">Sources</p>
+        <div class="grid gap-2 sm:grid-cols-2">
+          <%= for input <- source_inputs(@event.source_input_snapshot) do %>
+            <div class="rounded-lg border border-base-300 bg-base-200/30 p-3">
+              <p class="font-medium text-sm">{Map.get(input, "headline", Map.get(input, "title", "(no headline)"))}</p>
+              <p class="text-xs text-base-content/60 mt-1 break-all">{Map.get(input, "url", "")}</p>
+              <p class="text-xs text-base-content/50 mt-2">{Map.get(input, "excerpt", Map.get(input, "summary", ""))}</p>
+            </div>
+          <% end %>
         </div>
       </div>
-    </article>
+
+      <%= if @event.llm_prompt do %>
+        <div>
+          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">LLM Prompt</p>
+          <pre class="rounded-lg bg-base-200 p-3 text-xs overflow-x-auto max-h-48 overflow-y-auto border border-base-300"><code>{@event.llm_prompt}</code></pre>
+        </div>
+      <% end %>
+
+      <%= if @event.llm_output do %>
+        <div>
+          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">LLM Output</p>
+          <pre class="rounded-lg bg-base-200 p-3 text-xs overflow-x-auto max-h-48 overflow-y-auto border border-base-300"><code>{inspect(@event.llm_output, pretty: true, limit: :infinity)}</code></pre>
+        </div>
+      <% end %>
+
+      <div>
+        <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">Change Details</p>
+        <pre class="rounded-lg bg-base-200 p-3 text-xs overflow-x-auto max-h-48 overflow-y-auto border border-base-300"><code>{inspect(@event.change_details, pretty: true, limit: :infinity)}</code></pre>
+      </div>
+    </div>
     """
   end
 
-  # ── Helpers ──────────────────────────────────────────────────────────────────
+  # ── Helpers ───────────────────────────────────────────────────────────────────
+
+  defp parse_positive_int(value, _default) when is_integer(value) and value > 0, do: value
+
+  defp parse_positive_int(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} when int > 0 -> int
+      _ -> default
+    end
+  end
+
+  defp parse_positive_int(_value, default), do: default
 
   defp jobs_path(query_params, overrides) do
     params =
@@ -595,65 +554,19 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     Enum.into(map, %{}, fn {key, value} -> {to_string(key), value} end)
   end
 
-  defp job_selected?(nil, _job_id), do: false
-
-  defp job_selected?(%{job: job}, job_id) do
-    Map.get(job, :id) == job_id
-  end
-
-  defp worker_short_name(nil), do: "(unknown)"
-  defp worker_short_name(worker), do: worker |> String.split(".") |> List.last()
-
-  defp state_badge_class(state) do
-    case state do
-      "executing" -> "bg-blue-100 text-blue-700"
-      "available" -> "bg-amber-100 text-amber-700"
-      "scheduled" -> "bg-amber-100 text-amber-700"
-      "retryable" -> "bg-orange-100 text-orange-700"
-      "completed" -> "bg-green-100 text-green-700"
-      "discarded" -> "bg-red-100 text-red-700"
-      "cancelled" -> "bg-base-200 text-base-content/50"
-      _ -> "bg-base-200 text-base-content/50"
+  defp atom_to_status_text(status) do
+    case status do
+      :running -> "Running"
+      :completed -> "Completed"
+      :failed -> "Failed"
+      :discarded -> "Discarded"
+      :mixed -> "Mixed"
+      _ -> "Unknown"
     end
   end
 
-  defp normalize_filters(params) do
-    %{
-      "queue" => normalize_filter_value(Map.get(params, "queue")),
-      "worker" => normalize_filter_value(Map.get(params, "worker")),
-      "state" => normalize_filter_value(Map.get(params, "state")),
-      "time_window_hours" => normalize_time_window(Map.get(params, "time_window_hours"))
-    }
-  end
-
-  defp default_filters do
-    %{"queue" => "", "worker" => "", "state" => "", "time_window_hours" => ""}
-  end
-
-  defp filters_active?(filters) do
-    Enum.any?(filters, fn {_k, v} -> v != "" end)
-  end
-
-  defp normalize_filter_value(value) when is_binary(value), do: String.trim(value)
-  defp normalize_filter_value(_value), do: ""
-
-  defp normalize_time_window(value) do
-    case parse_positive_int(value, nil) do
-      nil -> ""
-      hours -> Integer.to_string(hours)
-    end
-  end
-
-  defp parse_positive_int(value, _default) when is_integer(value) and value > 0, do: value
-
-  defp parse_positive_int(value, default) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, ""} when int > 0 -> int
-      _ -> default
-    end
-  end
-
-  defp parse_positive_int(_value, default), do: default
+  defp format_datetime(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
+  defp format_datetime(_), do: "-"
 
   defp source_inputs(%{"sources" => sources}) when is_list(sources), do: sources
   defp source_inputs(%{"items" => items}) when is_list(items), do: items
@@ -666,14 +579,11 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   defp ingestion_event?(_event), do: false
 
-  defp format_datetime(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
-  defp format_datetime(_), do: "-"
-
   defp empty_page do
     %{entries: [], page: 1, per_page: @per_page, total_count: 0, total_pages: 1}
   end
 
   defp refresh_page(socket) do
-    push_patch(socket, to: jobs_path(socket.assigns.query_params, %{}))
+    push_patch(socket, to: ~p"/admin/jobs")
   end
 end

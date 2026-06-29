@@ -394,6 +394,144 @@ defmodule LeythersCom.Intelligence do
 
   def job_operations_detail(_job_id), do: nil
 
+  def list_processes(opts \\ %{}) when is_map(opts) do
+    page = positive_integer(opts[:page], 1)
+    per_page = positive_integer(opts[:per_page], 20) |> min(100)
+
+    base_query =
+      JobEffectEvent
+      |> where([event], not is_nil(event.process_run_id))
+      |> job_effect_events_scope()
+
+    # Get count of distinct processes
+    count_query =
+      base_query
+      |> distinct([event], event.process_run_id)
+      |> select([event], event.process_run_id)
+
+    total_count = Repo.aggregate(count_query, :count, :id)
+    total_pages = if total_count == 0, do: 1, else: div(total_count + per_page - 1, per_page)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * per_page
+
+    # Get processes with their max timestamp using subquery
+    process_query =
+      base_query
+      |> group_by([event], event.process_run_id)
+      |> select([event], {event.process_run_id, max(event.inserted_at)})
+      |> order_by([event], desc: max(event.inserted_at))
+      |> limit(^per_page)
+      |> offset(^offset)
+
+    processes =
+      process_query
+      |> Repo.all()
+      |> Enum.map(fn {process_run_id, _} -> process_summary(process_run_id) end)
+
+    %{
+      entries: processes,
+      page: current_page,
+      per_page: per_page,
+      total_count: total_count,
+      total_pages: total_pages
+    }
+  end
+
+  def process_summary(process_run_id) when is_binary(process_run_id) do
+    events =
+      JobEffectEvent
+      |> where([event], event.process_run_id == ^process_run_id)
+      |> order_by([event], asc: event.inserted_at)
+      |> Repo.all()
+
+    case events do
+      [] ->
+        nil
+
+      _ ->
+        first_event = List.first(events)
+        last_event = List.last(events)
+
+        {process_type, process_name} = infer_process_info(events)
+
+        # Count decision outcomes
+        completed = Enum.count(events, &(&1.state in ["completed"]))
+        discarded = Enum.count(events, &(&1.state in ["discarded"]))
+        executing = Enum.count(events, &(&1.state in ["executing"]))
+        failed = Enum.count(events, &(&1.state in ["retryable"]))
+
+        %{
+          process_run_id: process_run_id,
+          process_type: process_type,
+          process_name: process_name,
+          status: infer_process_status(events),
+          started_at: first_event.inserted_at,
+          last_updated_at: last_event.inserted_at,
+          event_count: Enum.count(events),
+          stats: %{
+            completed: completed,
+            discarded: discarded,
+            executing: executing,
+            failed: failed
+          }
+        }
+    end
+  end
+
+  defp infer_process_info(events) do
+    first_event = List.first(events)
+
+    case first_event.worker do
+      "LeythersCom.Ingestion.FetchRssFeedWorker" ->
+        case first_event.source_ids do
+          [source_id | _] ->
+            source_id_uuid = Ecto.UUID.dump(source_id)
+
+            case source_id_uuid do
+              {:ok, id} ->
+                case Repo.get_by(LeythersCom.Content.RawSource, id: id) do
+                  nil -> {:ingestion, "RSS Feed Ingestion"}
+                  source -> {:ingestion, "RSS Feed: #{source.feed_name}"}
+                end
+
+              :error ->
+                {:ingestion, "RSS Feed Ingestion"}
+            end
+
+          _ ->
+            {:ingestion, "RSS Feed Ingestion"}
+        end
+
+      "LeythersCom.Intelligence.SourceEditorialWorker" ->
+        source_count = Enum.count(events, &(not Enum.empty?(&1.source_ids)))
+        {:editorial, "Editorial Review: #{source_count} sources"}
+
+      worker ->
+        # Fallback for other workers
+        {:job, worker}
+    end
+  end
+
+  defp infer_process_status(events) do
+    states = Enum.map(events, & &1.state)
+
+    cond do
+      Enum.any?(states, &(&1 == "executing")) -> :running
+      Enum.any?(states, &(&1 == "retryable")) -> :failed
+      Enum.any?(states, &(&1 == "discarded")) -> :discarded
+      Enum.all?(states, &(&1 == "completed")) -> :completed
+      true -> :mixed
+    end
+  end
+
+  def process_events(process_run_id) when is_binary(process_run_id) do
+    JobEffectEvent
+    |> where([event], event.process_run_id == ^process_run_id)
+    |> order_by([event], asc: event.inserted_at)
+    |> preload(:permanent_article)
+    |> Repo.all()
+  end
+
   def monthly_budget_state(%Date{} = date, monthly_budget_gbp) do
     monthly_spend = monthly_spend(date)
     monthly_budget = to_decimal(monthly_budget_gbp)

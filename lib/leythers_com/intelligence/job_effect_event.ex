@@ -30,6 +30,9 @@ defmodule LeythersCom.Intelligence.JobEffectEvent do
     field :change_summary, :string
     field :change_details, :map, default: %{}
     field :error_summary, :string
+    field :process_run_id, Ecto.UUID
+    field :llm_prompt, :string
+    field :llm_output, :string
 
     belongs_to :permanent_article, PermanentArticle
 
