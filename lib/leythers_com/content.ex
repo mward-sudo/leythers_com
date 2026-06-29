@@ -61,6 +61,27 @@ defmodule LeythersCom.Content do
     |> Repo.all()
   end
 
+  def delete_smoke_test_articles do
+    delete_articles_by_slug_prefix("smoke-test-")
+  end
+
+  def delete_articles_by_slug_prefix(prefix) when is_binary(prefix) do
+    trimmed_prefix = String.trim(prefix)
+
+    if trimmed_prefix == "" do
+      {:error, :invalid_prefix}
+    else
+      import Ecto.Query
+
+      query =
+        from article in PermanentArticle,
+          where: like(article.slug, ^"#{trimmed_prefix}%")
+
+      {deleted_count, _} = Repo.delete_all(query)
+      {:ok, deleted_count}
+    end
+  end
+
   defp maybe_filter_status(query, nil), do: query
 
   defp maybe_filter_status(query, status) do

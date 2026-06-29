@@ -5,7 +5,12 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
 
   use LeythersComWeb, :live_view
 
+  import Ecto.Changeset
+
+  alias Ecto.UUID
   alias LeythersCom.Content
+
+  @article_form_types %{title: :string, body: :string, source_ids: :string}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -13,7 +18,8 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
      socket
      |> assign(:page_title, "Manual Article Publish")
      |> assign(:published_slug, nil)
-     |> assign(:form, to_form(%{"title" => "", "body" => "", "source_ids" => ""}, as: :article))}
+     |> assign(:form, article_form(%{"title" => "", "body" => "", "source_ids" => ""}))
+     |> assign(:cleanup_form, to_form(%{"slug_prefix" => "smoke-test-"}, as: :cleanup))}
   end
 
   @impl true
@@ -55,6 +61,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
               <.form
                 for={@form}
                 id="article-publish-form"
+                phx-change="validate"
                 phx-submit="save"
                 class="space-y-5"
               >
@@ -81,8 +88,18 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
                 />
 
                 <div class="flex justify-end border-t border-base-300 pt-4">
-                  <.button variant="primary" class="btn btn-primary">Publish now</.button>
+                  <.button
+                    variant="primary"
+                    class="btn btn-primary"
+                    phx-disable-with="Publishing..."
+                  >
+                    Publish now
+                  </.button>
                 </div>
+
+                <p class="hidden text-sm text-base-content/70 phx-submit-loading:block" role="status">
+                  Publishing article...
+                </p>
               </.form>
             </section>
 
@@ -106,6 +123,29 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
                   <strong class="block text-base-content">Deterministic slugs</strong>
                   Slug collisions are resolved deterministically by the content context.
                 </p>
+
+                <.form
+                  for={@cleanup_form}
+                  id="article-cleanup-form"
+                  phx-submit="cleanup"
+                  class="space-y-3 rounded-2xl border border-warning/30 bg-warning/10 p-4"
+                >
+                  <p class="text-sm">
+                    <strong class="block text-base-content">Cleanup tool</strong>
+                    Delete previously created smoke-test articles by slug prefix.
+                  </p>
+
+                  <.input
+                    field={@cleanup_form[:slug_prefix]}
+                    id="cleanup-slug-prefix"
+                    label="Slug prefix"
+                    class="input input-bordered w-full"
+                  />
+
+                  <.button class="btn btn-warning" phx-disable-with="Deleting...">
+                    Delete matching articles
+                  </.button>
+                </.form>
               </div>
             </aside>
           </div>
@@ -116,22 +156,95 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
   end
 
   @impl true
-  def handle_event("save", %{"article" => params}, socket) do
-    source_ids = parse_source_ids(params["source_ids"])
+  def handle_event("validate", %{"article" => params}, socket) do
+    {:noreply, assign(socket, :form, article_form(params, action: :validate))}
+  end
 
-    case Content.publish_article(params, source_ids) do
-      {:ok, article} ->
+  @impl true
+  def handle_event("save", %{"article" => params}, socket) do
+    form_changeset = article_changeset(params)
+
+    if form_changeset.valid? do
+      source_ids = parse_source_ids(params["source_ids"])
+
+      case Content.publish_article(params, source_ids) do
+        {:ok, article} ->
+          {:noreply,
+           socket
+           |> put_flash(:info, "Article published successfully")
+           |> assign(:published_slug, article.slug)
+           |> assign(:form, article_form(%{"title" => "", "body" => "", "source_ids" => ""}))}
+
+        {:error, changeset} ->
+          {:noreply,
+           socket
+           |> put_flash(:error, "Unable to publish article")
+           |> assign(:form, article_form_with_publish_error(form_changeset, changeset))}
+      end
+    else
+      {:noreply, assign(socket, :form, article_form(params, action: :validate))}
+    end
+  end
+
+  @impl true
+  def handle_event("cleanup", %{"cleanup" => %{"slug_prefix" => slug_prefix}}, socket) do
+    case Content.delete_articles_by_slug_prefix(slug_prefix) do
+      {:ok, deleted_count} ->
         {:noreply,
          socket
-         |> assign(:published_slug, article.slug)
-         |> assign(
-           :form,
-           to_form(%{"title" => "", "body" => "", "source_ids" => ""}, as: :article)
-         )}
+         |> put_flash(:info, "Deleted #{deleted_count} matching article(s)")
+         |> assign(:cleanup_form, to_form(%{"slug_prefix" => slug_prefix}, as: :cleanup))}
 
-      {:error, changeset} ->
-        {:noreply, assign(socket, :form, to_form(changeset, as: :article))}
+      {:error, :invalid_prefix} ->
+        {:noreply,
+         socket
+         |> put_flash(:error, "Please provide a non-empty slug prefix")
+         |> assign(:cleanup_form, to_form(%{"slug_prefix" => slug_prefix}, as: :cleanup))}
     end
+  end
+
+  defp article_form(params, opts \\ []) do
+    params
+    |> article_changeset()
+    |> maybe_set_action(opts[:action])
+    |> to_form(as: :article)
+  end
+
+  defp article_changeset(params) do
+    {%{}, @article_form_types}
+    |> cast(params, Map.keys(@article_form_types))
+    |> validate_required([:title, :body])
+    |> validate_change(:source_ids, fn :source_ids, source_ids ->
+      if invalid_source_ids?(source_ids) do
+        [source_ids: "must contain valid UUIDs separated by commas or new lines"]
+      else
+        []
+      end
+    end)
+  end
+
+  defp article_form_with_publish_error(form_changeset, publish_changeset) do
+    changeset =
+      if Keyword.has_key?(publish_changeset.errors, :raw_source_id) do
+        add_error(form_changeset, :source_ids, "contains unknown source IDs")
+      else
+        form_changeset
+      end
+
+    changeset
+    |> maybe_set_action(:validate)
+    |> to_form(as: :article)
+  end
+
+  defp maybe_set_action(changeset, nil), do: changeset
+  defp maybe_set_action(changeset, action), do: %{changeset | action: action}
+
+  defp invalid_source_ids?(nil), do: false
+
+  defp invalid_source_ids?(source_ids) do
+    source_ids
+    |> parse_source_ids()
+    |> Enum.any?(&(UUID.cast(&1) == :error))
   end
 
   defp parse_source_ids(nil), do: []

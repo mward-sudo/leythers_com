@@ -140,6 +140,52 @@ defmodule LeythersCom.ContentTest do
     end
   end
 
+  describe "delete_articles_by_slug_prefix/1" do
+    test "deletes matching articles and returns the count" do
+      {:ok, _article_a} =
+        Content.create_article(%{
+          slug: "smoke-test-article-a",
+          title: "Smoke A",
+          body: "Body A"
+        })
+
+      {:ok, _article_b} =
+        Content.create_article(%{
+          slug: "smoke-test-article-b",
+          title: "Smoke B",
+          body: "Body B"
+        })
+
+      {:ok, _article_other} =
+        Content.create_article(%{
+          slug: "keep-this-one",
+          title: "Keep",
+          body: "Body"
+        })
+
+      assert {:ok, 2} = Content.delete_articles_by_slug_prefix("smoke-test-")
+      assert Repo.aggregate(PermanentArticle, :count, :id) == 1
+    end
+
+    test "returns error for blank prefix" do
+      assert {:error, :invalid_prefix} = Content.delete_articles_by_slug_prefix("   ")
+    end
+  end
+
+  describe "delete_smoke_test_articles/0" do
+    test "uses the smoke-test slug prefix" do
+      {:ok, _article} =
+        Content.create_article(%{
+          slug: "smoke-test-article-default",
+          title: "Smoke Default",
+          body: "Body"
+        })
+
+      assert {:ok, 1} = Content.delete_smoke_test_articles()
+      assert Repo.aggregate(PermanentArticle, :count, :id) == 0
+    end
+  end
+
   defp count_article_sources(article_id) do
     ArticleSource
     |> where([article_source], article_source.permanent_article_id == ^article_id)

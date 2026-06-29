@@ -69,6 +69,56 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
       assert {:ok, article} = Content.get_article_by_slug("live-linked-publish")
       assert source_link_count(article.id) == 2
     end
+
+    test "shows validation errors when required fields are empty", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/articles/new")
+
+      assert render_change(element(view, "#article-publish-form"), %{
+               "article" => %{"title" => "", "body" => "", "source_ids" => ""}
+             })
+
+      assert has_element?(view, "#article-publish-form", "can't be blank")
+    end
+
+    test "shows source id format validation errors", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/articles/new")
+
+      assert render_change(element(view, "#article-publish-form"), %{
+               "article" => %{
+                 "title" => "Manual Source Validation",
+                 "body" => "Validate source IDs",
+                 "source_ids" => "not-a-uuid"
+               }
+             })
+
+      assert has_element?(
+               view,
+               "#article-publish-form",
+               "must contain valid UUIDs separated by commas or new lines"
+             )
+    end
+
+    test "cleanup tool deletes smoke-test articles by slug prefix", %{conn: conn} do
+      {:ok, _smoke_article} =
+        Content.create_article(%{
+          slug: "smoke-test-live-cleanup",
+          title: "Smoke Cleanup",
+          body: "cleanup me"
+        })
+
+      {:ok, _keep_article} =
+        Content.create_article(%{slug: "keep-live-cleanup", title: "Keep", body: "keep me"})
+
+      {:ok, view, _html} = live(conn, ~p"/admin/articles/new")
+
+      assert render_submit(element(view, "#article-cleanup-form"), %{
+               "cleanup" => %{"slug_prefix" => "smoke-test-"}
+             })
+
+      assert {:error, :not_found} = Content.get_article_by_slug("smoke-test-live-cleanup")
+      assert {:ok, _article} = Content.get_article_by_slug("keep-live-cleanup")
+      assert has_element?(view, "#flash-info", "Deleted 1 matching article(s)")
+    end
   end
 
   defp source_link_count(article_id) do
