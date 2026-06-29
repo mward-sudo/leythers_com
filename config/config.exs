@@ -140,7 +140,12 @@ config :leythers_com, :ingestion_feeds, [
 
 config :leythers_com, :ingestion_monitoring,
   stale_after_hours: 6,
-  enqueue_dedupe_seconds: 900
+  enqueue_dedupe_seconds: 900,
+  retry_base_seconds: 60,
+  retry_max_seconds: 1800,
+  retry_multipliers: %{
+    "google_news_leigh_leopards" => 2.0
+  }
 
 # Configure Quantum scheduler
 config :leythers_com, LeythersCom.Scheduler,

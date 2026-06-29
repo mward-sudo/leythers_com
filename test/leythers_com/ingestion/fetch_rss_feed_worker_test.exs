@@ -2,6 +2,7 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorkerTest do
   use LeythersCom.DataCase, async: true
 
   alias LeythersCom.Ingestion
+  alias LeythersCom.Ingestion.FetchRssFeedWorker
 
   defmodule FakeFeedClient do
     def fetch(_url) do
@@ -65,5 +66,22 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorkerTest do
 
     assert {:error, :missing_origin_provider} =
              Ingestion.ingest_rss_feed(%{"url" => "https://example.com/feed.xml"}, FakeFeedClient)
+  end
+
+  describe "backoff/1" do
+    test "applies exponential retry backoff from configured base" do
+      job = %Oban.Job{attempt: 3, args: %{}}
+      assert FetchRssFeedWorker.backoff(job) == 240
+    end
+
+    test "applies provider-specific multiplier when configured" do
+      job = %Oban.Job{attempt: 2, args: %{"origin_provider" => "google_news_leigh_leopards"}}
+      assert FetchRssFeedWorker.backoff(job) == 240
+    end
+
+    test "caps delay at configured max" do
+      job = %Oban.Job{attempt: 12, args: %{"origin_provider" => "google_news_leigh_leopards"}}
+      assert FetchRssFeedWorker.backoff(job) == 1800
+    end
   end
 end
