@@ -312,6 +312,64 @@ defmodule LeythersCom.ContentTest do
     end
   end
 
+  describe "publish_or_update_ai_article/3" do
+    test "creates a new ai article with voice styling and rumour labeling" do
+      assert {:ok, :created, article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh linked with surprise halfback",
+                   body: "Reports suggest Leigh are exploring a move."
+                 },
+                 [],
+                 rumour: true
+               )
+
+      assert article.author_type == "ai_editor"
+      assert String.starts_with?(article.title, "Rumour: ")
+      assert article.body =~ "Rumour mill warning"
+      assert article.body =~ "Terrace verdict"
+    end
+
+    test "updates recent matching ai article when change is not significant" do
+      assert {:ok, :created, created_article} =
+               Content.publish_or_update_ai_article(%{
+                 title: "Leigh eye cup final boost",
+                 body: "Initial version"
+               })
+
+      assert {:ok, :updated, updated_article} =
+               Content.publish_or_update_ai_article(%{
+                 title: "Leigh eye cup final boost as squad improves",
+                 body: "Updated version"
+               })
+
+      assert updated_article.id == created_article.id
+      assert updated_article.version == created_article.version + 1
+      assert updated_article.body =~ "Updated version"
+    end
+
+    test "creates a new ai article when change is significant" do
+      assert {:ok, :created, first_article} =
+               Content.publish_or_update_ai_article(%{
+                 title: "Leigh set for another big night",
+                 body: "Base story"
+               })
+
+      assert {:ok, :created, second_article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh set for another big night with transfer twist",
+                   body: "Significant shift"
+                 },
+                 [],
+                 significant_change: true
+               )
+
+      refute second_article.id == first_article.id
+      assert second_article.version == 1
+    end
+  end
+
   defp count_article_sources(article_id) do
     ArticleSource
     |> where([article_source], article_source.permanent_article_id == ^article_id)

@@ -91,6 +91,13 @@ defmodule LeythersComWeb.Telemetry do
         tags: [:result]
       ),
       sum("leythers_com.content.provenance_history.query.stop.count", tags: [:result]),
+      summary("leythers_com.content.ai_editorial.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result, :action, :rumour, :significant_change]
+      ),
+      sum("leythers_com.content.ai_editorial.stop.count",
+        tags: [:result, :action, :rumour, :significant_change]
+      ),
       summary("leythers_com.intelligence.cost_ledger.upsert.stop.duration",
         unit: {:native, :millisecond},
         tags: [:result]

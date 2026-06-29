@@ -6,6 +6,7 @@ defmodule LeythersCom.Content do
   alias LeythersCom.Content.ArticleSource
   alias LeythersCom.Content.PermanentArticle
   alias LeythersCom.Content.Slug
+  alias LeythersCom.Content.Voice
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Repo
 
@@ -57,6 +58,44 @@ defmodule LeythersCom.Content do
 
     emit_manual_publish_telemetry(result, started_at, source_count)
     result
+  end
+
+  def publish_or_update_ai_article(attrs, source_ids \\ [], opts \\ []) when is_map(attrs) do
+    started_at = System.monotonic_time()
+    significant_change? = Keyword.get(opts, :significant_change, false)
+    rumour? = Keyword.get(opts, :rumour, false)
+    recency_window_hours = Keyword.get(opts, :recency_window_hours, 36)
+
+    title = fetch_attr(attrs, :title) || ""
+    body = fetch_attr(attrs, :body)
+
+    voiced =
+      Voice.apply(%{title: title, body: body},
+        rumour: rumour?
+      )
+
+    source_ids = source_ids |> Enum.reject(&blank?/1) |> Enum.map(&to_string/1) |> Enum.uniq()
+
+    result =
+      Repo.transaction(fn ->
+        publish_or_update_ai_decision(
+          voiced,
+          body,
+          source_ids,
+          significant_change?,
+          recency_window_hours
+        )
+      end)
+
+    finalized_result =
+      case result do
+        {:ok, {:created, article}} -> {:ok, :created, article}
+        {:ok, {:updated, article}} -> {:ok, :updated, article}
+        {:error, reason} -> {:error, reason}
+      end
+
+    emit_ai_editorial_telemetry(finalized_result, started_at, rumour?, significant_change?)
+    finalized_result
   end
 
   def get_article!(id), do: Repo.get!(PermanentArticle, id)
@@ -174,6 +213,112 @@ defmodule LeythersCom.Content do
     end)
   end
 
+  defp create_ai_article(voiced, raw_body, source_ids) do
+    {:ok, slug} = Slug.unique_for_title(voiced.title)
+
+    article_attrs = %{
+      title: voiced.title,
+      body: voiced.body,
+      slug: slug,
+      author_type: "ai_editor",
+      status: "published",
+      version: 1,
+      raw_content_backup: raw_body
+    }
+
+    with {:ok, article} <- create_article(article_attrs),
+         :ok <- insert_article_sources(article.id, source_ids) do
+      {:created, article}
+    else
+      {:error, changeset} -> Repo.rollback(changeset)
+    end
+  end
+
+  defp publish_or_update_ai_decision(
+         voiced,
+         raw_body,
+         source_ids,
+         true,
+         _recency_window_hours
+       ) do
+    create_ai_article(voiced, raw_body, source_ids)
+  end
+
+  defp publish_or_update_ai_decision(
+         voiced,
+         raw_body,
+         source_ids,
+         false,
+         recency_window_hours
+       ) do
+    case find_recent_matching_ai_article(voiced.title, recency_window_hours) do
+      nil -> create_ai_article(voiced, raw_body, source_ids)
+      article -> update_ai_article(article, voiced, raw_body, source_ids)
+    end
+  end
+
+  defp update_ai_article(article, voiced, raw_body, source_ids) do
+    attrs = %{
+      title: voiced.title,
+      body: voiced.body,
+      raw_content_backup: raw_body,
+      status: "published"
+    }
+
+    with {:ok, updated_article} <- update_article(article, attrs),
+         :ok <- insert_missing_article_sources(updated_article.id, source_ids) do
+      {:updated, updated_article}
+    else
+      {:error, changeset} -> Repo.rollback(changeset)
+    end
+  end
+
+  defp insert_missing_article_sources(_article_id, []), do: :ok
+
+  defp insert_missing_article_sources(article_id, source_ids) do
+    existing_ids = existing_source_ids_for_article(article_id)
+
+    source_ids
+    |> Enum.reject(&(&1 in existing_ids))
+    |> then(&insert_article_sources(article_id, &1))
+  end
+
+  defp existing_source_ids_for_article(article_id) do
+    import Ecto.Query
+
+    from(article_source in ArticleSource,
+      where: article_source.permanent_article_id == ^article_id,
+      select: article_source.raw_source_id
+    )
+    |> Repo.all()
+  end
+
+  defp find_recent_matching_ai_article(title, recency_window_hours) do
+    import Ecto.Query
+
+    cutoff = DateTime.add(DateTime.utc_now(), -recency_window_hours * 3600, :second)
+    story_key = story_key(title)
+
+    PermanentArticle
+    |> where([article], article.author_type == "ai_editor")
+    |> where([article], article.status == "published")
+    |> where([article], article.updated_at >= ^cutoff)
+    |> order_by([article], desc: article.updated_at)
+    |> Repo.all()
+    |> Enum.find(fn article -> story_key(article.title) == story_key end)
+  end
+
+  defp story_key(title) when is_binary(title) do
+    title
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9\s]/, " ")
+    |> String.split(~r/\s+/, trim: true)
+    |> Enum.take(5)
+    |> Enum.join(" ")
+  end
+
+  defp story_key(_), do: ""
+
   defp fetch_attr(attrs, key) do
     Map.get(attrs, key) || Map.get(attrs, to_string(key))
   end
@@ -240,6 +385,29 @@ defmodule LeythersCom.Content do
 
     :telemetry.execute(
       [:leythers_com, :content, :manual_publish, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      metadata
+    )
+  end
+
+  defp emit_ai_editorial_telemetry(result, started_at, rumour?, significant_change?) do
+    metadata =
+      case result do
+        {:ok, action, article} ->
+          %{
+            result: :ok,
+            action: action,
+            article_id: article.id,
+            rumour: rumour?,
+            significant_change: significant_change?
+          }
+
+        {:error, _reason} ->
+          %{result: :error, rumour: rumour?, significant_change: significant_change?}
+      end
+
+    :telemetry.execute(
+      [:leythers_com, :content, :ai_editorial, :stop],
       %{duration: System.monotonic_time() - started_at, count: 1},
       metadata
     )
