@@ -21,7 +21,6 @@ defmodule LeythersComWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
-    live "/admin/articles/new", Admin.ArticlePublishLive
   end
 
   # Other scopes may use custom stacks.
@@ -55,6 +54,7 @@ defmodule LeythersComWeb.Router do
       on_mount: [{LeythersComWeb.UserAuth, :require_authenticated}] do
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
+      live "/admin/articles/new", Admin.ArticlePublishLive
     end
 
     post "/users/update-password", UserSessionController, :update_password

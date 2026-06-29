@@ -25,7 +25,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
         <div class="overflow-hidden rounded-3xl border border-base-300 bg-base-100 shadow-2xl shadow-base-300/20">
           <div class="h-1 bg-gradient-to-r from-primary via-secondary to-accent" />

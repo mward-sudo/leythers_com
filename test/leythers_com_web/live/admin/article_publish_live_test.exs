@@ -8,8 +8,17 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
   alias LeythersCom.Ingestion
   alias LeythersCom.Repo
 
+  describe "authentication" do
+    test "redirects unauthenticated users to the login page", %{conn: conn} do
+      assert {:error, {:redirect, %{to: path}}} = live(conn, ~p"/admin/articles/new")
+      assert path =~ "/users/log-in"
+    end
+  end
+
   describe "new/0" do
-    test "renders the manual publish form", %{conn: conn} do
+    setup :register_and_log_in_user
+
+    test "renders the manual publish form", %{conn: conn, user: _user} do
       {:ok, view, html} = live(conn, ~p"/admin/articles/new")
 
       assert html =~ "Manual Article Publish"
@@ -19,7 +28,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
       assert has_element?(view, "#article-source-ids")
     end
 
-    test "publishes an article without source links", %{conn: conn} do
+    test "publishes an article without source links", %{conn: conn, user: _user} do
       {:ok, view, _html} = live(conn, ~p"/admin/articles/new")
 
       form = element(view, "#article-publish-form")
@@ -37,7 +46,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
       assert article.status == "published"
     end
 
-    test "publishes an article with selected source links", %{conn: conn} do
+    test "publishes an article with selected source links", %{conn: conn, user: _user} do
       {:ok, source_a} =
         Ingestion.create_raw_source(%{
           title: "Live Source A",
@@ -70,7 +79,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
       assert source_link_count(article.id) == 2
     end
 
-    test "shows validation errors when required fields are empty", %{conn: conn} do
+    test "shows validation errors when required fields are empty", %{conn: conn, user: _user} do
       {:ok, view, _html} = live(conn, ~p"/admin/articles/new")
 
       assert render_change(element(view, "#article-publish-form"), %{
@@ -80,7 +89,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
       assert has_element?(view, "#article-publish-form", "can't be blank")
     end
 
-    test "shows source id format validation errors", %{conn: conn} do
+    test "shows source id format validation errors", %{conn: conn, user: _user} do
       {:ok, view, _html} = live(conn, ~p"/admin/articles/new")
 
       assert render_change(element(view, "#article-publish-form"), %{
@@ -98,7 +107,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
              )
     end
 
-    test "cleanup tool deletes smoke-test articles by slug prefix", %{conn: conn} do
+    test "cleanup tool deletes smoke-test articles by slug prefix", %{conn: conn, user: _user} do
       {:ok, _smoke_article} =
         Content.create_article(%{
           slug: "smoke-test-live-cleanup",
