@@ -12,8 +12,8 @@ defmodule LeythersCom.Application do
       LeythersCom.Repo,
       {DNSCluster, query: Application.get_env(:leythers_com, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: LeythersCom.PubSub},
-      # Start a worker by calling: LeythersCom.Worker.start_link(arg)
-      # {LeythersCom.Worker, arg},
+      {Oban, Application.fetch_env!(:leythers_com, Oban)},
+      LeythersCom.Scheduler,
       # Start to serve requests, typically the last entry
       LeythersComWeb.Endpoint
     ]
