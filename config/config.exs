@@ -112,7 +112,9 @@ config :leythers_com, :editorial_orchestration,
 
 config :leythers_com, :intelligence_generation,
   auto_generation_enabled: true,
-  source_batch_size: 20
+  source_batch_size: 20,
+  llm_draft_enabled: true,
+  llm_cost_per_1k_tokens_gbp: "0.000000"
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason

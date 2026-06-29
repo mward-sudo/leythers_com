@@ -53,7 +53,9 @@ config :leythers_com, :editorial_orchestration,
 
 config :leythers_com, :intelligence_generation,
   auto_generation_enabled: false,
-  source_batch_size: 20
+  source_batch_size: 20,
+  llm_draft_enabled: false,
+  llm_cost_per_1k_tokens_gbp: "0.000000"
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime

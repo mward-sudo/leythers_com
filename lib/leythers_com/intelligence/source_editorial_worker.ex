@@ -14,6 +14,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Content
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Intelligence
+  alias LeythersCom.Intelligence.EditorialOrchestrator
+  alias LeythersCom.Intelligence.LLMClient
   alias LeythersCom.Repo
 
   @default_batch_size 20
@@ -62,8 +64,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
              rumour: rumour_cluster?(cluster_sources),
              significant_change: significant_change_cluster?(cluster_sources)
            ) do
-        {:ok, _action, _article} -> mark_sources_processed(source_ids)
-        _ -> :ok
+        {:ok, _action, _article} ->
+          mark_sources_processed(source_ids)
+          _ = EditorialOrchestrator.trigger_source_update_refresh()
+
+          :ok
+
+        _ ->
+          :ok
       end
     else
       :ok
@@ -82,12 +90,132 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp build_article_attrs(cluster_sources) do
     primary = List.first(cluster_sources)
     summary = article_summary(cluster_sources)
+    rumour? = rumour_cluster?(cluster_sources)
 
-    %{
-      title: primary.title,
-      body: summary
-    }
+    case llm_draft_attrs(cluster_sources, rumour?) do
+      {:ok, llm_attrs} ->
+        llm_attrs
+
+      :error ->
+        %{
+          title: primary.title,
+          body: summary
+        }
+    end
   end
+
+  defp llm_draft_attrs(cluster_sources, rumour?) do
+    if llm_draft_enabled?() do
+      llm_draft_attrs_enabled(cluster_sources, rumour?)
+    else
+      :error
+    end
+  end
+
+  defp llm_draft_attrs_enabled(cluster_sources, rumour?) do
+    prompt = llm_prompt(cluster_sources, rumour?)
+
+    case LLMClient.generate(prompt) do
+      {:ok, %{text: text}} -> parse_and_record_draft(prompt, text)
+      _ -> :error
+    end
+  end
+
+  defp parse_and_record_draft(prompt, text) do
+    case parse_llm_draft(text) do
+      {:ok, attrs} ->
+        record_llm_cost(prompt, text)
+        {:ok, attrs}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp parse_llm_draft(text) when is_binary(text) do
+    lines =
+      text
+      |> String.split("\n")
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+
+    title_line = Enum.find(lines, &String.starts_with?(String.upcase(&1), "TITLE:"))
+    body_index = Enum.find_index(lines, &String.starts_with?(String.upcase(&1), "BODY:"))
+
+    title =
+      case title_line do
+        nil -> List.first(lines)
+        line -> String.trim_leading(line, "TITLE:") |> String.trim()
+      end
+
+    body =
+      if is_integer(body_index) and body_index + 1 < length(lines) do
+        lines
+        |> Enum.drop(body_index + 1)
+        |> Enum.join("\n")
+      else
+        lines
+        |> Enum.drop(1)
+        |> Enum.join("\n")
+      end
+
+    if blank?(title) or blank?(body) do
+      :error
+    else
+      {:ok, %{title: String.slice(title, 0, 180), body: String.slice(body, 0, 12_000)}}
+    end
+  end
+
+  defp parse_llm_draft(_), do: :error
+
+  defp llm_prompt(cluster_sources, rumour?) do
+    """
+    Write a concise Leythers-style rugby article using these source notes.
+
+    Requirements:
+    - Keep factual grounding to provided notes only.
+    - Return plain text with this exact format:
+      TITLE: <single title line>
+      BODY:
+      <markdown body, 2-4 short paragraphs>
+    - If rumour is true, use cautious language and include uncertainty.
+
+    Rumour: #{rumour?}
+
+    Source notes:
+    #{article_summary(cluster_sources)}
+    """
+  end
+
+  defp record_llm_cost(prompt, completion) do
+    prompt_tokens = estimate_tokens(prompt)
+    output_tokens = estimate_tokens(completion)
+    total_tokens = prompt_tokens + output_tokens
+
+    estimated_cost_gbp =
+      llm_cost_per_1k_tokens_gbp()
+      |> Decimal.mult(Decimal.new(total_tokens))
+      |> Decimal.div(Decimal.new(1000))
+
+    _ =
+      Intelligence.upsert_cost_ledger(%{
+        date: Date.utc_today(),
+        input_tokens: prompt_tokens,
+        output_tokens: output_tokens,
+        estimated_cost_gbp: estimated_cost_gbp
+      })
+
+    :ok
+  end
+
+  defp estimate_tokens(text) when is_binary(text) do
+    text
+    |> String.split(~r/\s+/, trim: true)
+    |> length()
+    |> max(1)
+  end
+
+  defp estimate_tokens(_), do: 1
 
   defp article_summary(cluster_sources) do
     cluster_sources
@@ -132,6 +260,19 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> Keyword.get(:auto_generation_enabled, true)
   end
 
+  defp llm_draft_enabled? do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:llm_draft_enabled, true)
+  end
+
+  defp llm_cost_per_1k_tokens_gbp do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:llm_cost_per_1k_tokens_gbp, "0.000000")
+    |> Decimal.new()
+  end
+
   defp default_batch_size do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
@@ -142,4 +283,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     args
     |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
   end
+
+  defp blank?(value), do: value in [nil, ""]
 end

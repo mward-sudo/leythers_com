@@ -16,7 +16,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     Application.put_env(:leythers_com, :intelligence_generation,
       auto_generation_enabled: true,
-      source_batch_size: 20
+      source_batch_size: 20,
+      llm_draft_enabled: false,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
     )
 
     :ok
@@ -80,5 +82,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     [source] = Ingestion.list_raw_sources(status: "pending")
     assert source.title =~ "transfer rumour"
+
+    assert Decimal.compare(Intelligence.monthly_spend(Date.utc_today()), Decimal.new("20.00")) ==
+             :eq
   end
 end
