@@ -64,3 +64,23 @@
    rationale/decision summary, token counts, and estimated cost.
 8. Voice consistency checks enforce rough fan tone with irreverent humour while validating core
    factual grounding to cited sources.
+
+## Admin Job Operations Panel
+
+1. Admin page shows three lifecycle groups: active (`executing`), queued
+   (`available`/`scheduled`/`retryable`), and completed/terminal
+   (`completed`/`discarded`/`cancelled`).
+2. Every completed or terminal ingestion/editorial job has at least one persisted outcome record
+   suitable for diagnostics rendering.
+3. Job detail view includes source input details used by execution:
+   - source URL,
+   - source headline,
+   - source text excerpt/summary.
+4. Job detail view includes decision details for create/update/amalgamate/skip outcomes.
+5. Job detail view includes resulting change details:
+   - target article identifier,
+   - before/after excerpt for updated/amalgamated content.
+6. Job detail rendering remains available even if linked source/article rows are later modified or
+   deleted.
+7. Page supports pagination and filtering by queue, worker, and state without timeouts under normal
+   expected load.

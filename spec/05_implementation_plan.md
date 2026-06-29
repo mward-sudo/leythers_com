@@ -184,3 +184,31 @@ Deliverables:
 
 1. A measurable editorial feedback loop tied to cost and quality outcomes.
 2. Clear criteria for when to expand beyond single-author mode.
+
+## Phase G: Admin Job Operations Panel
+
+Goals:
+
+1. Give operators complete visibility into active, queued, and completed job behavior.
+2. Make each job auditable from input sources to resulting article changes.
+
+Tasks:
+
+1. Add `job_effect_events` persistence on ingestion/editorial workers.
+2. Capture source input snapshots (URL, headline, text excerpt) at job execution time.
+3. Capture decision outcomes (`created`, `updated`, `amalgamated`, skips) and rationale summary.
+4. Capture change details for resulting article mutations (before/after title/body excerpt).
+5. Implement admin LiveView page with three job buckets:
+   - active,
+   - queued,
+   - completed/terminal.
+6. Add drill-down pane for selected job showing source inputs, decision details, and resulting
+   change details.
+7. Add pagination and lightweight filters (worker, queue, state, time window).
+8. Add tests for state bucketing, outcome rendering, and empty/error states.
+
+Deliverables:
+
+1. Admin can inspect job lifecycle and concrete content outcomes without querying DB manually.
+2. Failed and skipped jobs include enough context for remediation.
+3. Job-level provenance remains visible after source/article rows evolve.

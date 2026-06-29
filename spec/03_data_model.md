@@ -114,6 +114,49 @@ Indexes:
 
 1. unique index on `date`
 
+## Table: job_effect_events (Operations Diagnostics)
+
+Purpose: immutable per-job outcome snapshots for admin diagnostics UI.
+
+Columns:
+
+1. `id` uuid pk
+2. `oban_job_id` bigint not null
+3. `worker` string not null
+4. `queue` string not null
+5. `state` string not null
+6. `attempt` integer not null default 1
+7. `decision_action` string not null
+8. `permanent_article_id` uuid nullable -> `permanent_articles.id` on delete `:nilify_all`
+9. `source_ids` {:array, :binary_id} not null default []
+10. `source_input_snapshot` map not null default `%{}`
+11. `change_summary` text nullable
+12. `change_details` map not null default `%{}`
+13. `error_summary` text nullable
+14. `inserted_at` utc_datetime_usec not null
+
+Checks:
+
+1. `state in ('available','scheduled','executing','retryable','completed','discarded','cancelled')`
+2. `decision_action in ('created','updated','amalgamated','skipped_budget','skipped_publish_error','skipped_validation','no_op')`
+3. `attempt >= 1`
+
+Indexes:
+
+1. index on `oban_job_id`
+2. index on `state`
+3. index on `worker`
+4. index on `inserted_at`
+
+Behavior rules:
+
+1. A completed/failed job writes at least one `job_effect_events` row.
+2. `source_input_snapshot` must include source URL, source headline, and source text excerpt used by
+	the job.
+3. For `updated`/`amalgamated` outcomes, `change_details` must include before/after article diffs at
+	minimum for title and body excerpt.
+4. Records are append-only and are not mutated after insert.
+
 Operational rules:
 
 1. Default monthly generation cap is `GBP 10.00`.
@@ -129,6 +172,7 @@ Recommended migration order:
 2. `permanent_articles`
 3. `article_sources`
 4. `cost_ledgers`
+5. `job_effect_events`
 
 Recommended migration file names:
 
@@ -136,6 +180,7 @@ Recommended migration file names:
 2. `*_create_permanent_articles.exs`
 3. `*_create_article_sources.exs`
 4. `*_create_cost_ledgers.exs`
+5. `*_create_job_effect_events.exs`
 
 ## Ecto Schema Conventions
 

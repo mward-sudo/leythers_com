@@ -33,6 +33,8 @@ Failure policy:
 1. Create `permanent_articles` with AI author type.
 2. Require at least one source row and link all used source rows via `article_sources`.
 3. Update `raw_sources.status` to `processed`.
+4. Persist `job_effect_events` records containing source input snapshots, decision action, and
+   resulting content changes.
 
 ## Pipeline B: Manual Fast-Track
 
@@ -54,6 +56,33 @@ Failure policy:
 
 1. Render success response with permalink.
 2. Do not enqueue background jobs for this flow.
+
+## Pipeline C: Admin Job Diagnostics
+
+### Step C1: Lifecycle Buckets
+
+1. Query active jobs from Oban (`executing`).
+2. Query queued jobs from Oban (`available`, `scheduled`, `retryable`).
+3. Query completed jobs from Oban (`completed`, `discarded`, `cancelled`).
+
+### Step C2: Outcome Correlation
+
+1. Join jobs to `job_effect_events` by `oban_job_id`.
+2. Join to linked article/source entities for drill-down.
+
+### Step C3: Detail Rendering
+
+1. Render original source details used by job:
+   - source URL,
+   - source headline,
+   - source text excerpt/summary.
+2. Render decision details:
+   - create / update / amalgamate / skip action,
+   - decision rationale summary,
+   - significance metadata where available.
+3. Render resulting change details:
+   - resulting article id/slug/title,
+   - before/after excerpts when content was updated or amalgamated.
 
 ## Budget Guardrail Rules
 
@@ -77,3 +106,4 @@ Failure policy:
 2. Track counts: fetched, deduped, generated, published, failed.
 3. Track budget state transitions: below_cap, near_cap, over_cap.
 4. Track source-link health transitions: ok, redirected, broken.
+5. Track job-effect write failures and diagnostics rendering latency.

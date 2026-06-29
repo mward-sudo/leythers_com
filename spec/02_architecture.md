@@ -54,6 +54,20 @@ Owns:
 - `permanent_articles`
 - `article_sources`
 
+### 4) Admin Operations Surface
+
+Responsibilities:
+
+- expose active, queued, completed, and failed background jobs,
+- render per-job execution details and resulting content changes,
+- provide operator-grade diagnostics for ingestion/editorial outcomes.
+
+Reads/depends on:
+
+- `oban_jobs` (job lifecycle state)
+- job effect/provenance records (see Data Model)
+- source/article/decision tables for contextual drill-down.
+
 ## Flow Topology
 
 ### Asynchronous ingestion/generation path
@@ -73,6 +87,16 @@ Owns:
 
 No Oban or LLM call is required for this fast-track route.
 
+### Admin operations diagnostics path
+
+1. Admin opens operations panel.
+2. UI queries job lifecycle state from Oban-backed data.
+3. UI joins job state with job-effect records and linked domain entities.
+4. Admin can inspect:
+	- source inputs (URL, headline, source summary/body excerpt),
+	- editorial decision outcome (create/update/amalgamate/skip),
+	- resulting article changes and linkage updates.
+
 ## Supervision & Runtime Components
 
 Expected application children:
@@ -91,3 +115,5 @@ Expected application children:
 2. Prefer idempotent jobs and deterministic dedupe keys.
 3. Record source-provenance links for all publishable artifacts.
 4. Use DB constraints to enforce domain safety before app-level checks.
+5. Persist deterministic job-effect summaries so operations UI remains stable even when source/article
+	rows evolve after job completion.

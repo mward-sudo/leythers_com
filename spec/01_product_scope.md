@@ -18,6 +18,8 @@ Build an ultra-low-cost, high-performance Leigh Leopards fan content platform th
 3. Preserve source attribution and decision auditability for trust.
 4. Enforce predictable operating costs.
 5. Keep architecture simple enough for a small team.
+6. Provide an admin operations panel that exposes active, queued, and completed jobs with
+   human-readable outcome details.
 
 ## Explicit Constraints
 
@@ -46,3 +48,5 @@ Build an ultra-low-cost, high-performance Leigh Leopards fan content platform th
 8. LLM decisions must be auditable (prompt version, inputs, rationale, token/cost metadata).
 9. Generated editorial tone should be rough fan style with irreverent humour while preserving core
    factual accuracy.
+10. Every ingestion/editorial job must be traceable from execution state to concrete content outcome
+   (source inputs, decision taken, and resulting article changes).
