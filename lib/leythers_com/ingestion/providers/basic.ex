@@ -23,13 +23,20 @@ defmodule LeythersCom.Ingestion.Providers.Basic do
   @impl true
   def normalize(attrs) when is_map(attrs) do
     attrs
+    |> stringify_keys()
     |> trim_string_fields()
     |> normalize_url()
   end
 
+  defp stringify_keys(attrs) do
+    Enum.reduce(attrs, %{}, fn {key, value}, acc ->
+      Map.put(acc, to_string(key), value)
+    end)
+  end
+
   defp trim_string_fields(attrs) do
     Enum.reduce(
-      [:title, :body_summary, :origin_provider, "title", "body_summary", "origin_provider"],
+      ["title", "body_summary", "origin_provider"],
       attrs,
       fn key, acc ->
         case Map.fetch(acc, key) do
@@ -41,10 +48,9 @@ defmodule LeythersCom.Ingestion.Providers.Basic do
   end
 
   defp normalize_url(attrs) do
-    cond do
-      Map.has_key?(attrs, :url) -> Map.update!(attrs, :url, &canonicalize_url/1)
-      Map.has_key?(attrs, "url") -> Map.update!(attrs, "url", &canonicalize_url/1)
-      true -> attrs
+    case Map.fetch(attrs, "url") do
+      {:ok, url} -> Map.put(attrs, "url", canonicalize_url(url))
+      :error -> attrs
     end
   end
 

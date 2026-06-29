@@ -12,10 +12,10 @@ defmodule LeythersCom.Ingestion.Providers.BasicTest do
     }
 
     assert %{
-             title: "Leigh Leopards win",
-             body_summary: "Big match",
-             origin_provider: "bbc_sport",
-             url: "https://example.com/leigh-win"
+             "title" => "Leigh Leopards win",
+             "body_summary" => "Big match",
+             "origin_provider" => "bbc_sport",
+             "url" => "https://example.com/leigh-win"
            } = Basic.normalize(attrs)
   end
 

@@ -18,7 +18,7 @@ defmodule LeythersCom.Ingestion.Providers.Html do
   end
 
   defp put_title(attrs) do
-    maybe_put(attrs, :title, fn html ->
+    maybe_put(attrs, "title", fn html ->
       html
       |> first_text([
         ~s(meta[property="og:title"]),
@@ -29,7 +29,7 @@ defmodule LeythersCom.Ingestion.Providers.Html do
   end
 
   defp put_body_summary(attrs) do
-    maybe_put(attrs, :body_summary, fn html ->
+    maybe_put(attrs, "body_summary", fn html ->
       html
       |> first_text([
         ~s(meta[name="description"]),
@@ -39,7 +39,7 @@ defmodule LeythersCom.Ingestion.Providers.Html do
   end
 
   defp maybe_put(attrs, key, extractor) do
-    case Map.get(attrs, :html) || Map.get(attrs, "html") do
+    case Map.get(attrs, "html") do
       html when is_binary(html) ->
         value = html |> extractor.() |> normalize_text()
 

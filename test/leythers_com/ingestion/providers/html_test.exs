@@ -22,10 +22,10 @@ defmodule LeythersCom.Ingestion.Providers.HtmlTest do
     }
 
     assert %{
-             title: "Leigh Leopards Claim Victory",
-             body_summary: "A late try sealed the win.",
-             url: "https://example.com/leigh-win",
-             origin_provider: "bbc_sport"
+             "title" => "Leigh Leopards Claim Victory",
+             "body_summary" => "A late try sealed the win.",
+             "url" => "https://example.com/leigh-win",
+             "origin_provider" => "bbc_sport"
            } = Html.normalize(attrs)
   end
 
@@ -43,7 +43,7 @@ defmodule LeythersCom.Ingestion.Providers.HtmlTest do
       """
     }
 
-    assert %{title: "Match Report", body_summary: "This is the opening paragraph."} =
+    assert %{"title" => "Match Report", "body_summary" => "This is the opening paragraph."} =
              Html.normalize(attrs)
   end
 end
