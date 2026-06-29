@@ -140,6 +140,42 @@ defmodule LeythersCom.ContentTest do
     end
   end
 
+  describe "update_article/2" do
+    test "increments version when editing a published article" do
+      {:ok, article} =
+        Content.create_article(%{
+          slug: "versioned-published-article",
+          title: "Published Article",
+          body: "Initial body",
+          status: "published",
+          version: 1
+        })
+
+      assert {:ok, updated_article} =
+               Content.update_article(article, %{title: "Updated Published Article"})
+
+      assert updated_article.title == "Updated Published Article"
+      assert updated_article.version == 2
+    end
+
+    test "does not increment version when editing a draft article" do
+      {:ok, article} =
+        Content.create_article(%{
+          slug: "versioned-draft-article",
+          title: "Draft Article",
+          body: "Initial body",
+          status: "draft",
+          version: 1
+        })
+
+      assert {:ok, updated_article} =
+               Content.update_article(article, %{title: "Updated Draft Article"})
+
+      assert updated_article.title == "Updated Draft Article"
+      assert updated_article.version == 1
+    end
+  end
+
   describe "delete_articles_by_slug_prefix/1" do
     test "deletes matching articles and returns the count" do
       {:ok, _article_a} =

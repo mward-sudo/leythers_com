@@ -14,6 +14,14 @@ defmodule LeythersCom.Content do
     |> Repo.insert()
   end
 
+  def update_article(%PermanentArticle{} = article, attrs) when is_map(attrs) do
+    attrs = maybe_increment_article_version(article, attrs)
+
+    article
+    |> PermanentArticle.changeset(attrs)
+    |> Repo.update()
+  end
+
   def publish_article(attrs, source_ids \\ []) do
     title = fetch_attr(attrs, :title) || ""
     body = fetch_attr(attrs, :body)
@@ -111,6 +119,37 @@ defmodule LeythersCom.Content do
 
   defp fetch_attr(attrs, key) do
     Map.get(attrs, key) || Map.get(attrs, to_string(key))
+  end
+
+  defp maybe_increment_article_version(
+         %PermanentArticle{status: "published", version: version},
+         attrs
+       )
+       when is_integer(version) do
+    put_version_update(attrs, version + 1)
+  end
+
+  defp maybe_increment_article_version(_article, attrs), do: attrs
+
+  defp put_version_update(attrs, next_version) when map_size(attrs) == 0 do
+    Map.put(attrs, :version, next_version)
+  end
+
+  defp put_version_update(attrs, next_version) do
+    keys = Map.keys(attrs)
+
+    cond do
+      Enum.all?(keys, &is_atom/1) ->
+        Map.put(attrs, :version, next_version)
+
+      Enum.all?(keys, &is_binary/1) ->
+        Map.put(attrs, "version", next_version)
+
+      true ->
+        attrs
+        |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
+        |> Map.put("version", next_version)
+    end
   end
 
   defp blank?(value), do: value in [nil, ""]
