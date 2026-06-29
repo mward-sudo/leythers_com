@@ -20,35 +20,68 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <div class="space-y-6">
-        <div class="space-y-2">
-          <h1 class="text-2xl font-semibold tracking-tight">Manual Article Publish</h1>
-          <p class="text-sm text-base-content/70">
-            Publish a story immediately, with optional source links attached in the same transaction.
-          </p>
+      <div class="manual-publish-page">
+        <div class="manual-publish-shell">
+          <div class="manual-publish-grid">
+            <section class="manual-publish-main">
+              <div class="manual-publish-kicker">Fast-track publish</div>
+              <h1 class="manual-publish-title">Manual Article Publish</h1>
+              <p class="manual-publish-lede">
+                Publish a story immediately, with optional source links attached in the same transaction.
+                This path bypasses background jobs and is designed for human-authored updates.
+              </p>
+
+              <%= if @published_slug do %>
+                <div class="manual-publish-status published-banner">
+                  <div>
+                    <strong>Published article</strong>
+                    <div class="manual-publish-slug">Published article: {@published_slug}</div>
+                  </div>
+                </div>
+              <% end %>
+
+              <.form
+                for={@form}
+                id="article-publish-form"
+                phx-submit="save"
+                class="manual-publish-form"
+              >
+                <.input field={@form[:title]} id="article-title" label="Title" />
+                <.input field={@form[:body]} id="article-body" type="textarea" label="Body" />
+                <.input
+                  field={@form[:source_ids]}
+                  id="article-source-ids"
+                  type="textarea"
+                  label="Source IDs"
+                  prompt="Optional raw source UUIDs, one per line"
+                />
+
+                <div class="manual-publish-submit">
+                  <.button variant="primary" class="manual-publish-button">Publish now</.button>
+                </div>
+              </.form>
+            </section>
+
+            <aside class="manual-publish-aside manual-publish-sidebar">
+              <h2>Publish notes</h2>
+
+              <p class="manual-publish-note">
+                <strong>Immediate publication</strong>
+                Articles publish immediately and start at version 1.
+              </p>
+
+              <p class="manual-publish-note">
+                <strong>Optional links</strong>
+                Source IDs are optional. If supplied, they are linked in the same database transaction.
+              </p>
+
+              <p class="manual-publish-note">
+                <strong>Deterministic slugs</strong>
+                Slug collisions are resolved deterministically by the content context.
+              </p>
+            </aside>
+          </div>
         </div>
-
-        <%= if @published_slug do %>
-          <div class="rounded-lg border border-success/30 bg-success/10 p-4 text-success-content">
-            Published article: {@published_slug}
-          </div>
-        <% end %>
-
-        <.form for={@form} id="article-publish-form" phx-submit="save" class="space-y-4">
-          <.input field={@form[:title]} id="article-title" label="Title" />
-          <.input field={@form[:body]} id="article-body" type="textarea" label="Body" />
-          <.input
-            field={@form[:source_ids]}
-            id="article-source-ids"
-            type="textarea"
-            label="Source IDs"
-            prompt="Optional raw source UUIDs, one per line"
-          />
-
-          <div class="flex justify-end">
-            <.button variant="primary">Publish now</.button>
-          </div>
-        </.form>
       </div>
     </Layouts.app>
     """

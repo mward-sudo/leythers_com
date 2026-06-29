@@ -106,3 +106,173 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+.manual-publish-page {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.manual-publish-shell {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 1.5rem;
+  background:
+    radial-gradient(circle at top right, rgba(255, 184, 0, 0.12), transparent 24%),
+    radial-gradient(circle at bottom left, rgba(234, 88, 12, 0.08), transparent 28%),
+    rgba(255, 255, 255, 0.92);
+  box-shadow: 0 30px 80px rgba(15, 23, 42, 0.12);
+}
+
+.manual-publish-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+}
+
+.manual-publish-main,
+.manual-publish-aside {
+  padding: 2rem;
+}
+
+.manual-publish-main {
+  border-right: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.manual-publish-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  border: 1px solid rgba(234, 88, 12, 0.18);
+  background: rgba(234, 88, 12, 0.08);
+  color: #c2410c;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+
+.manual-publish-title {
+  margin: 0.75rem 0 0.5rem;
+  font-size: clamp(2rem, 3vw, 3.15rem);
+  line-height: 1.05;
+  letter-spacing: -0.04em;
+}
+
+.manual-publish-lede {
+  max-width: 62ch;
+  margin: 0;
+  color: rgba(30, 41, 59, 0.75);
+  line-height: 1.7;
+}
+
+.manual-publish-status {
+  display: flex;
+  gap: 0.85rem;
+  align-items: flex-start;
+  margin: 1.5rem 0;
+  padding: 1rem 1.1rem;
+  border-radius: 1rem;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  background: rgba(34, 197, 94, 0.1);
+  color: #14532d;
+}
+
+.manual-publish-status strong,
+.manual-publish-note strong {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.manual-publish-slug {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  word-break: break-all;
+}
+
+.manual-publish-form {
+  margin-top: 1.5rem;
+}
+
+.manual-publish-form .fieldset {
+  margin-bottom: 1rem;
+}
+
+.manual-publish-form input,
+.manual-publish-form textarea {
+  width: 100%;
+  border: 1px solid rgba(15, 23, 42, 0.16);
+  border-radius: 0.8rem;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 0.85rem 0.95rem;
+  font: inherit;
+  color: inherit;
+  box-sizing: border-box;
+}
+
+.manual-publish-form textarea {
+  min-height: 11rem;
+  resize: vertical;
+}
+
+.manual-publish-form input:focus,
+.manual-publish-form textarea:focus {
+  outline: 2px solid rgba(234, 88, 12, 0.25);
+  outline-offset: 2px;
+  border-color: rgba(234, 88, 12, 0.35);
+}
+
+.manual-publish-submit {
+  display: inline-flex;
+  justify-content: flex-end;
+}
+
+.manual-publish-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.85rem 1.15rem;
+  background: linear-gradient(135deg, #ea580c, #f59e0b);
+  color: white;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 18px 32px rgba(234, 88, 12, 0.24);
+}
+
+.manual-publish-sidebar {
+  background: rgba(248, 250, 252, 0.8);
+}
+
+.manual-publish-sidebar h2 {
+  margin: 0 0 1rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: rgba(30, 41, 59, 0.58);
+}
+
+.manual-publish-note {
+  margin: 0 0 0.85rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: white;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.05);
+  line-height: 1.6;
+  color: rgba(30, 41, 59, 0.76);
+}
+
+.manual-publish-shell .published-banner {
+  margin-top: 1rem;
+}
+
+@media (max-width: 900px) {
+  .manual-publish-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .manual-publish-main {
+    border-right: 0;
+    border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  }
+}
