@@ -122,12 +122,19 @@ config :leythers_com, Oban,
 # Configure real web feeds for ingestion
 config :leythers_com, :ingestion_feeds, [
   %{
+    url: "https://news.google.com/rss/search?q=Leigh+Leopards&hl=en-GB&gl=GB&ceid=GB:en",
+    origin_provider: "google_news_leigh_leopards",
+    include_keywords: ["leigh", "leopards"]
+  },
+  %{
     url: "https://www.bbc.co.uk/sport/rugby-league/rss.xml",
-    origin_provider: "bbc_rugby_league"
+    origin_provider: "bbc_rugby_league",
+    include_keywords: ["leigh", "leopards"]
   },
   %{
     url: "https://www.seriousaboutrl.com/feed/",
-    origin_provider: "serious_about_rl"
+    origin_provider: "serious_about_rl",
+    include_keywords: ["leigh", "leopards"]
   }
 ]
 

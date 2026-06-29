@@ -43,6 +43,22 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorkerTest do
     assert Enum.any?(sources, &(&1.url == "https://example.com/story-2"))
   end
 
+  test "ingest_rss_feed/2 filters feed entries by include_keywords" do
+    assert {:ok, %{processed: 1, inserted: 1, errors: 0}} =
+             Ingestion.ingest_rss_feed(
+               %{
+                 "url" => "https://example.com/feed.xml",
+                 "origin_provider" => "bbc_rugby_league",
+                 "include_keywords" => ["second"]
+               },
+               FakeFeedClient
+             )
+
+    [source] = Ingestion.list_raw_sources()
+    assert source.title == "Leigh second story"
+    assert source.url == "https://example.com/story-2"
+  end
+
   test "ingest_rss_feed/2 returns config errors for missing attrs" do
     assert {:error, :missing_url} =
              Ingestion.ingest_rss_feed(%{"origin_provider" => "bbc_rugby_league"}, FakeFeedClient)

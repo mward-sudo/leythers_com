@@ -46,6 +46,19 @@ Deliverables:
 1. Homepage and article workflows are fed by dependable real web data.
 2. Operational confidence in ingestion quality is established before dashboard expansion.
 
+Execution backlog (ordered):
+
+1. Validate live ingestion end-to-end using Leigh-focused feeds and confirm stable dedupe/canonical
+   behavior under repeated polls.
+2. Improve extraction quality with provider-specific cleanup rules and regression fixtures from
+   real payloads.
+3. Add ingestion reliability controls: per-feed telemetry, failure backoff policy, and stale-feed
+   alert thresholds.
+4. Tighten editorial automation on real data by tuning update-vs-create clustering logic against
+   noisy titles.
+5. Add admin diagnostics dashboard after ingestion stability gates are met, focused on feed health,
+   ranking runs, and fallback rates.
+
 ## Phase A: Core Platform Baseline (Completed)
 
 Goals:

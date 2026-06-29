@@ -53,6 +53,24 @@ Local Ollama testing:
    - `ollama pull qwen3:1.7b`
 3. Keep `LLM_API_ENDPOINT=http://127.0.0.1:11434` for cost-free local evaluation.
 
+## Real Feed Ingestion Testing (Leigh Leopards)
+
+The app is configured with live RSS feeds filtered for Leigh Leopards coverage, including a
+Google News RSS query feed for `Leigh Leopards`.
+
+Trigger a live ingestion run manually:
+
+1. `mix run -e "IO.inspect(LeythersCom.Ingestion.ingest_configured_feeds())"`
+
+Inspect ingested sources quickly:
+
+1. `mix run -e "IO.inspect(Enum.take(LeythersCom.Ingestion.list_raw_sources(), 10))"`
+
+Notes:
+
+1. Feed polling is also scheduled via Quantum every 30 minutes.
+2. Configured feed filters include keywords `leigh` and `leopards` to reduce off-topic entries.
+
 Health checks:
 
 1. `GET /health` returns `200` with JSON when web and database are healthy.

@@ -55,6 +55,7 @@ defmodule LeythersCom.Ingestion do
     attrs = Basic.normalize(attrs)
     feed_url = Map.get(attrs, "url")
     origin_provider = Map.get(attrs, "origin_provider")
+    include_keywords = Map.get(attrs, "include_keywords", [])
 
     cond do
       blank?(feed_url) ->
@@ -64,7 +65,7 @@ defmodule LeythersCom.Ingestion do
         {:error, :missing_origin_provider}
 
       true ->
-        ingest_feed_items(feed_url, origin_provider, http_client)
+        ingest_feed_items(feed_url, origin_provider, include_keywords, http_client)
     end
   end
 
@@ -86,14 +87,44 @@ defmodule LeythersCom.Ingestion do
 
   defp blank?(value), do: value in [nil, ""]
 
-  defp ingest_feed_items(feed_url, origin_provider, http_client) do
+  defp ingest_feed_items(feed_url, origin_provider, include_keywords, http_client) do
     with {:ok, feed_body} <- http_client.fetch(feed_url) do
       feed_body
       |> Rss.parse_items(origin_provider, feed_url)
+      |> maybe_filter_items_by_keywords(include_keywords)
       |> reduce_feed_items()
       |> then(&{:ok, &1})
     end
   end
+
+  defp maybe_filter_items_by_keywords(items, include_keywords) when is_list(include_keywords) do
+    normalized_keywords =
+      include_keywords
+      |> Enum.filter(&is_binary/1)
+      |> Enum.map(&String.trim/1)
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.map(&String.downcase/1)
+
+    if normalized_keywords == [] do
+      items
+    else
+      Enum.filter(items, &item_matches_keywords?(&1, normalized_keywords))
+    end
+  end
+
+  defp maybe_filter_items_by_keywords(items, _include_keywords), do: items
+
+  defp item_matches_keywords?(item, keywords) when is_map(item) do
+    searchable_text =
+      [Map.get(item, "title"), Map.get(item, "body_summary")]
+      |> Enum.filter(&is_binary/1)
+      |> Enum.join(" ")
+      |> String.downcase()
+
+    Enum.any?(keywords, &String.contains?(searchable_text, &1))
+  end
+
+  defp item_matches_keywords?(_item, _keywords), do: false
 
   defp reduce_feed_items(items) do
     Enum.reduce(items, %{processed: 0, inserted: 0, errors: 0}, &accumulate_feed_item/2)

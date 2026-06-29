@@ -27,6 +27,17 @@ defmodule LeythersCom.IngestionTest do
       {:ok, _} = Ingestion.create_raw_source(@valid_attrs)
       assert {:error, %Ecto.Changeset{}} = Ingestion.create_raw_source(@valid_attrs)
     end
+
+    test "accepts long feed URLs used by news aggregators" do
+      long_url =
+        "https://news.google.com/rss/articles/" <>
+          String.duplicate("a", 280)
+
+      attrs = Map.put(@valid_attrs, :url, long_url)
+
+      assert {:ok, %RawSource{} = source} = Ingestion.create_raw_source(attrs)
+      assert source.url == long_url
+    end
   end
 
   describe "upsert_raw_source/1" do
