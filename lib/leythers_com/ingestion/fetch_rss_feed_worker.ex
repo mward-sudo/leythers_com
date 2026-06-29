@@ -6,8 +6,8 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
   use Oban.Worker, queue: :ingestion, max_attempts: 5
 
   alias LeythersCom.Ingestion
-  alias LeythersCom.Intelligence
   alias LeythersCom.Ingestion.HttpClient.Req
+  alias LeythersCom.Intelligence
 
   @impl Oban.Worker
   def perform(%Oban.Job{} = job) do

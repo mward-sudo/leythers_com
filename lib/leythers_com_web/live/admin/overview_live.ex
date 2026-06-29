@@ -73,9 +73,14 @@ defmodule LeythersComWeb.Admin.OverviewLive do
             </p>
           </div>
 
-          <.link navigate={~p"/admin/articles/new"} class="btn btn-primary btn-soft">
-            Open Manual Publish
-          </.link>
+          <div class="flex items-center gap-2">
+            <.link navigate={~p"/admin/jobs"} class="btn btn-outline btn-sm">
+              Open Job Operations
+            </.link>
+            <.link navigate={~p"/admin/articles/new"} class="btn btn-primary btn-soft">
+              Open Manual Publish
+            </.link>
+          </div>
         </div>
 
         <section class="grid gap-4 md:grid-cols-3" id="budget-summary">

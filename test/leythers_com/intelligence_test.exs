@@ -365,6 +365,110 @@ defmodule LeythersCom.IntelligenceTest do
     end
   end
 
+  describe "job operations queries" do
+    test "groups jobs into active, queued, and terminal bucket counts" do
+      _ =
+        create_oban_job(
+          "executing",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      _ = create_oban_job("available", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
+      _ = create_oban_job("retryable", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
+
+      _ =
+        create_oban_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      _ =
+        create_oban_job(
+          "cancelled",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      counts = Intelligence.job_operations_bucket_counts()
+
+      assert counts.active == 1
+      assert counts.queued == 2
+      assert counts.terminal == 2
+    end
+
+    test "filters and paginates jobs by bucket" do
+      for _ <- 1..3 do
+        _ =
+          create_oban_job(
+            "completed",
+            "LeythersCom.Intelligence.SourceEditorialWorker",
+            "intelligence"
+          )
+      end
+
+      queued =
+        create_oban_job("scheduled", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
+
+      first_page =
+        Intelligence.list_job_operations_jobs("terminal", %{page: 1, per_page: 2})
+
+      second_page =
+        Intelligence.list_job_operations_jobs("terminal", %{page: 2, per_page: 2})
+
+      filtered =
+        Intelligence.list_job_operations_jobs("queued", %{
+          queue: "ingestion",
+          worker: "FetchRssFeedWorker",
+          state: "scheduled",
+          page: 1,
+          per_page: 20
+        })
+
+      assert first_page.total_count == 3
+      assert first_page.total_pages == 2
+      assert length(first_page.entries) == 2
+
+      assert second_page.total_count == 3
+      assert second_page.page == 2
+      assert length(second_page.entries) == 1
+
+      assert filtered.total_count == 1
+      assert Enum.map(filtered.entries, & &1.id) == [queued.id]
+    end
+
+    test "returns persisted diagnostics for a selected job" do
+      job =
+        create_oban_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      assert {:ok, _event} =
+               Intelligence.create_job_effect_event(%{
+                 oban_job_id: job.id,
+                 worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+                 queue: "intelligence",
+                 state: "completed",
+                 attempt: 1,
+                 decision_action: "created",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_input_snapshot: %{"sources" => [%{"url" => "https://example.com/a"}]},
+                 change_summary: "created article",
+                 change_details: %{outcome: "created"}
+               })
+
+      detail = Intelligence.job_operations_detail(job.id)
+
+      assert detail.job.id == job.id
+      assert length(detail.events) == 1
+      assert hd(detail.events).decision_action == "created"
+      assert Intelligence.job_operations_detail(0) == nil
+    end
+  end
+
   describe "list_failed_jobs/1" do
     test "returns retryable and discarded jobs" do
       discarded_job = create_failed_oban_job("discarded")
@@ -447,6 +551,32 @@ defmodule LeythersCom.IntelligenceTest do
 
     from(j in Job, where: j.id == ^job.id)
     |> LeythersCom.Repo.update_all(set: updates)
+
+    LeythersCom.Repo.get!(Job, job.id)
+  end
+
+  defp create_oban_job(state, worker, queue) do
+    job =
+      Job.new(%{"source" => "test"},
+        worker: worker,
+        queue: String.to_atom(queue),
+        max_attempts: 5
+      )
+      |> LeythersCom.Repo.insert!()
+
+    now = DateTime.utc_now()
+
+    from(j in Job, where: j.id == ^job.id)
+    |> LeythersCom.Repo.update_all(
+      set: [
+        state: state,
+        attempt: if(state == "executing", do: 1, else: 2),
+        attempted_at: now,
+        completed_at: if(state == "completed", do: now, else: nil),
+        cancelled_at: if(state == "cancelled", do: now, else: nil),
+        discarded_at: if(state == "discarded", do: now, else: nil)
+      ]
+    )
 
     LeythersCom.Repo.get!(Job, job.id)
   end

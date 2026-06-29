@@ -12,6 +12,21 @@ defmodule LeythersCom.Intelligence do
   alias Oban.Job
 
   @budget_config_key :intelligence_budget
+  @job_bucket_states %{
+    active: ["executing"],
+    queued: ["available", "scheduled", "retryable"],
+    terminal: ["completed", "discarded", "cancelled"]
+  }
+
+  @job_filter_states [
+    "available",
+    "scheduled",
+    "executing",
+    "retryable",
+    "completed",
+    "discarded",
+    "cancelled"
+  ]
 
   def upsert_cost_ledger(%{date: date} = attrs) when not is_nil(date) do
     started_at = System.monotonic_time()
@@ -194,6 +209,81 @@ defmodule LeythersCom.Intelligence do
 
   def retry_failed_job(_job_id), do: {:error, :invalid_job_id}
 
+  def job_operations_bucket_counts(filters \\ %{}) when is_map(filters) do
+    base_query = job_operations_base_query(filters)
+
+    Enum.into(@job_bucket_states, %{}, fn {bucket, states} ->
+      count =
+        base_query
+        |> where([job], job.state in ^states)
+        |> Repo.aggregate(:count, :id)
+
+      {bucket, count}
+    end)
+  end
+
+  def list_job_operations_jobs(bucket, opts \\ %{}) when is_map(opts) do
+    states = bucket_states(bucket)
+    page = positive_integer(opts[:page], 1)
+    per_page = positive_integer(opts[:per_page], 20) |> min(100)
+
+    query =
+      opts
+      |> job_operations_base_query()
+      |> where([job], job.state in ^states)
+
+    total_count = Repo.aggregate(query, :count, :id)
+    total_pages = if total_count == 0, do: 1, else: div(total_count + per_page - 1, per_page)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * per_page
+
+    jobs =
+      query
+      |> order_by([job], desc: job.attempted_at, desc: job.inserted_at, desc: job.id)
+      |> limit(^per_page)
+      |> offset(^offset)
+      |> Repo.all()
+
+    %{
+      entries: jobs,
+      page: current_page,
+      per_page: per_page,
+      total_count: total_count,
+      total_pages: total_pages
+    }
+  end
+
+  def job_operations_filter_options do
+    queues =
+      Job
+      |> job_operations_scope()
+      |> distinct([job], job.queue)
+      |> select([job], job.queue)
+      |> order_by([job], asc: job.queue)
+      |> Repo.all()
+
+    workers =
+      Job
+      |> job_operations_scope()
+      |> distinct([job], job.worker)
+      |> select([job], job.worker)
+      |> order_by([job], asc: job.worker)
+      |> Repo.all()
+
+    %{queues: queues, workers: workers, states: @job_filter_states}
+  end
+
+  def job_operations_detail(job_id) when is_integer(job_id) and job_id > 0 do
+    with %Job{} = job <- Repo.get(Job, job_id) do
+      %{
+        job: job,
+        events: job_effect_events_for_job(job_id)
+      }
+    end
+  end
+
+  def job_operations_detail(_job_id), do: nil
+
   def monthly_budget_state(%Date{} = date, monthly_budget_gbp) do
     monthly_spend = monthly_spend(date)
     monthly_budget = to_decimal(monthly_budget_gbp)
@@ -290,6 +380,86 @@ defmodule LeythersCom.Intelligence do
       %{duration: System.monotonic_time() - started_at, count: 1},
       %{result: normalize_budget_result(result)}
     )
+  end
+
+  defp bucket_states(bucket) when is_binary(bucket) do
+    case bucket do
+      "active" -> Map.fetch!(@job_bucket_states, :active)
+      "queued" -> Map.fetch!(@job_bucket_states, :queued)
+      "terminal" -> Map.fetch!(@job_bucket_states, :terminal)
+      _ -> Map.fetch!(@job_bucket_states, :active)
+    end
+  end
+
+  defp bucket_states(bucket) when is_atom(bucket) do
+    Map.get(@job_bucket_states, bucket, Map.fetch!(@job_bucket_states, :active))
+  end
+
+  defp bucket_states(_bucket), do: Map.fetch!(@job_bucket_states, :active)
+
+  defp positive_integer(value, _default) when is_integer(value) and value > 0, do: value
+
+  defp positive_integer(value, default) when is_binary(value) do
+    case Integer.parse(value) do
+      {int, ""} when int > 0 -> int
+      _ -> default
+    end
+  end
+
+  defp positive_integer(_value, default), do: default
+
+  defp job_operations_base_query(filters) do
+    queue = Map.get(filters, :queue) || Map.get(filters, "queue")
+    worker = Map.get(filters, :worker) || Map.get(filters, "worker")
+    state = Map.get(filters, :state) || Map.get(filters, "state")
+
+    time_window_hours =
+      Map.get(filters, :time_window_hours) || Map.get(filters, "time_window_hours")
+
+    Job
+    |> job_operations_scope()
+    |> maybe_filter_queue(queue)
+    |> maybe_filter_worker(worker)
+    |> maybe_filter_state(state)
+    |> maybe_filter_time_window_hours(time_window_hours)
+  end
+
+  defp job_operations_scope(query) do
+    where(
+      query,
+      [job],
+      like(job.worker, "LeythersCom.Ingestion.%") or
+        like(job.worker, "LeythersCom.Intelligence.%")
+    )
+  end
+
+  defp maybe_filter_queue(query, queue) when is_binary(queue) and queue != "" do
+    where(query, [job], job.queue == ^queue)
+  end
+
+  defp maybe_filter_queue(query, _queue), do: query
+
+  defp maybe_filter_worker(query, worker) when is_binary(worker) and worker != "" do
+    where(query, [job], ilike(job.worker, ^"%#{worker}%"))
+  end
+
+  defp maybe_filter_worker(query, _worker), do: query
+
+  defp maybe_filter_state(query, state) when state in @job_filter_states do
+    where(query, [job], job.state == ^state)
+  end
+
+  defp maybe_filter_state(query, _state), do: query
+
+  defp maybe_filter_time_window_hours(query, time_window_hours) do
+    case positive_integer(time_window_hours, 0) do
+      hours when hours > 0 ->
+        threshold = DateTime.add(DateTime.utc_now(), -hours * 3600, :second)
+        where(query, [job], job.inserted_at >= ^threshold)
+
+      _ ->
+        query
+    end
   end
 
   defp normalize_budget_result(:ok), do: :ok
