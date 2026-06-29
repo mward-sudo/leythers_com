@@ -186,6 +186,40 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert length(ai_articles) == 2
   end
 
+  test "groups similar headlines into one article and aggregates all source links" do
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title: "Super League: Leigh overcome Toulouse as Charnley scores four tries",
+               url: "https://example.com/similar-group-1",
+               body_summary: "Match report from provider one.",
+               origin_provider: "provider_one",
+               external_published_at: ~U[2026-06-29 17:00:00.000000Z]
+             })
+
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title: "Charnley scores four tries as Leigh beat Toulouse",
+               url: "https://example.com/similar-group-2",
+               body_summary: "Match report from provider two.",
+               origin_provider: "provider_two",
+               external_published_at: ~U[2026-06-29 17:05:00.000000Z]
+             })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert length(ai_articles) == 1
+
+    [article] = ai_articles
+    assert article.title =~ "Charnley"
+
+    assert count_article_sources(article.id) == 2
+
+    [decision] = Intelligence.recent_article_generation_decisions(1)
+    assert decision.source_count == 2
+    assert decision.decision_action == "created"
+  end
+
   test "drains pending backlog across multiple batches in one run" do
     Application.put_env(:leythers_com, :intelligence_generation,
       auto_generation_enabled: true,
@@ -220,12 +254,27 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       |> Enum.filter(&(&1.author_type == "ai_editor"))
       |> length()
 
+    linked_source_count =
+      from(article_source in LeythersCom.Content.ArticleSource, select: count(article_source.id))
+      |> Repo.one()
+
     decision_count =
       Intelligence.recent_article_generation_decisions(20)
       |> Enum.count(&(&1.decision_action in ["created", "updated"]))
 
     assert pending_count == 0
-    assert ai_article_count == 5
-    assert decision_count == 5
+    assert ai_article_count >= 1
+    assert linked_source_count == 5
+    assert decision_count >= 1
+  end
+
+  defp count_article_sources(article_id) do
+    import Ecto.Query
+
+    from(article_source in LeythersCom.Content.ArticleSource,
+      where: article_source.permanent_article_id == ^article_id,
+      select: count(article_source.id)
+    )
+    |> Repo.one()
   end
 end

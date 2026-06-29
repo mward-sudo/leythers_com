@@ -82,6 +82,27 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
     assert ranked_entry.importance_score == 70
   end
 
+  test "prioritizes source publication timestamp for recency scoring" do
+    now = DateTime.utc_now()
+
+    article_with_newer_source =
+      entry("New source", DateTime.add(now, -24 * 3600, :second), [])
+      |> put_in([:sources], [%{external_published_at: DateTime.add(now, -60, :second)}])
+
+    article_with_older_source =
+      entry("Old source", now, [])
+      |> put_in([:sources], [%{external_published_at: DateTime.add(now, -12 * 3600, :second)}])
+
+    ranked =
+      HomepageRanker.rank([article_with_older_source, article_with_newer_source],
+        llm_enabled: false,
+        recency_weight: 0.7,
+        importance_weight: 0.3
+      )
+
+    assert hd(ranked).article.title == "New source"
+  end
+
   defp entry(title, timestamp, source_markers) do
     %{
       article: %PermanentArticle{

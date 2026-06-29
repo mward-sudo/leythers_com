@@ -363,6 +363,42 @@ defmodule LeythersCom.ContentTest do
       assert updated_article.body =~ "Updated version"
     end
 
+    test "updates recent matching ai article for similar titles with different leading tokens" do
+      source_id_one =
+        create_source_id!(
+          "Leigh Toulouse source one",
+          "https://example.com/ai-similar-title-source-1"
+        )
+
+      source_id_two =
+        create_source_id!(
+          "Leigh Toulouse source two",
+          "https://example.com/ai-similar-title-source-2"
+        )
+
+      assert {:ok, :created, created_article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Super League: Leigh overcome Toulouse as Charnley scores four tries",
+                   body: "Initial version"
+                 },
+                 [source_id_one]
+               )
+
+      assert {:ok, :updated, updated_article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Charnley scores four tries as Leigh beat Toulouse",
+                   body: "Updated version"
+                 },
+                 [source_id_two]
+               )
+
+      assert updated_article.id == created_article.id
+      assert updated_article.version == created_article.version + 1
+      assert count_article_sources(updated_article.id) == 2
+    end
+
     test "creates a new ai article when change is significant" do
       source_id =
         create_source_id!("Leigh significant source", "https://example.com/ai-significant-source")

@@ -16,6 +16,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.LLMClient
+  alias LeythersCom.Intelligence.StorySimilarity
   alias LeythersCom.Repo
 
   @default_batch_size 20
@@ -344,21 +345,35 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp cluster_sources(sources) do
-    sources
-    |> Enum.group_by(&story_key(&1.title))
-    |> Map.values()
+    Enum.reduce(sources, [], fn source, clusters ->
+      add_to_best_matching_cluster(clusters, source)
+    end)
   end
 
-  defp story_key(title) when is_binary(title) do
-    title
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9\s]/, " ")
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.take(5)
-    |> Enum.join(" ")
-  end
+  defp add_to_best_matching_cluster([], source), do: [[source]]
 
-  defp story_key(_), do: ""
+  defp add_to_best_matching_cluster(clusters, source) do
+    {updated_clusters, matched?} =
+      Enum.reduce(clusters, {[], false}, fn cluster, {acc, matched} ->
+        should_merge? =
+          not matched and
+            Enum.any?(cluster, fn cluster_source ->
+              StorySimilarity.similar?(cluster_source.title, source.title)
+            end)
+
+        if should_merge? do
+          {[cluster ++ [source] | acc], true}
+        else
+          {[cluster | acc], matched}
+        end
+      end)
+
+    if matched? do
+      Enum.reverse(updated_clusters)
+    else
+      Enum.reverse([[source] | updated_clusters])
+    end
+  end
 
   defp auto_generation_enabled? do
     :leythers_com

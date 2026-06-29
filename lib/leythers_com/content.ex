@@ -8,6 +8,7 @@ defmodule LeythersCom.Content do
   alias LeythersCom.Content.Slug
   alias LeythersCom.Content.Voice
   alias LeythersCom.Ingestion.RawSource
+  alias LeythersCom.Intelligence.StorySimilarity
   alias LeythersCom.Repo
 
   def create_article(attrs) do
@@ -301,7 +302,6 @@ defmodule LeythersCom.Content do
     import Ecto.Query
 
     cutoff = DateTime.add(DateTime.utc_now(), -recency_window_hours * 3600, :second)
-    story_key = story_key(title)
 
     PermanentArticle
     |> where([article], article.author_type == "ai_editor")
@@ -309,19 +309,8 @@ defmodule LeythersCom.Content do
     |> where([article], article.updated_at >= ^cutoff)
     |> order_by([article], desc: article.updated_at)
     |> Repo.all()
-    |> Enum.find(fn article -> story_key(article.title) == story_key end)
+    |> Enum.find(fn article -> StorySimilarity.similar?(article.title, title) end)
   end
-
-  defp story_key(title) when is_binary(title) do
-    title
-    |> String.downcase()
-    |> String.replace(~r/[^a-z0-9\s]/, " ")
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.take(5)
-    |> Enum.join(" ")
-  end
-
-  defp story_key(_), do: ""
 
   defp fetch_attr(attrs, key) do
     Map.get(attrs, key) || Map.get(attrs, to_string(key))
@@ -371,7 +360,8 @@ defmodule LeythersCom.Content do
         title: raw_source.title,
         url: raw_source.url,
         origin_provider: raw_source.origin_provider,
-        last_check_status: raw_source.last_check_status
+        last_check_status: raw_source.last_check_status,
+        external_published_at: raw_source.external_published_at
       }
     )
     |> Repo.all()

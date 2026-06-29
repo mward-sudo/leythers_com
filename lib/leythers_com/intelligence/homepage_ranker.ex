@@ -21,14 +21,15 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
   def rank(entries, opts \\ []) when is_list(entries) do
     started_at = System.monotonic_time()
     config = config() |> Keyword.merge(opts)
+    now = DateTime.utc_now()
 
     ranked =
       entries
-      |> Enum.sort_by(&recency_score(&1.article, DateTime.utc_now(), config), :desc)
+      |> Enum.sort_by(&recency_score(&1, now, config), :desc)
       |> Enum.with_index()
       |> Enum.map(fn {entry, index} ->
         llm_candidate? = index < config[:llm_candidate_limit]
-        score_entry(entry, llm_candidate?, config)
+        score_entry(entry, llm_candidate?, now, config)
       end)
       |> Enum.sort_by(& &1.hybrid_score, :desc)
 
@@ -42,9 +43,8 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     :ok
   end
 
-  defp score_entry(entry, llm_candidate?, config) do
-    now = DateTime.utc_now()
-    recency = recency_score(entry.article, now, config)
+  defp score_entry(entry, llm_candidate?, now, config) do
+    recency = recency_score(entry, now, config)
 
     {importance, importance_source} =
       entry
@@ -169,8 +169,8 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
 
   defp rumour_article?(_title), do: false
 
-  defp recency_score(article, now, config) do
-    timestamp = article.updated_at || article.inserted_at || now
+  defp recency_score(entry, now, config) do
+    timestamp = publication_timestamp(entry, now)
     age_seconds = DateTime.diff(now, timestamp, :second)
     age_hours = max(age_seconds / 3600, 0)
     max_age_hours = config[:max_age_hours]
@@ -178,6 +178,24 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     score = 100 * max(0.0, 1.0 - age_hours / max_age_hours)
     Float.round(score, 2)
   end
+
+  defp publication_timestamp(%{sources: sources, article: article}, now) do
+    publication_dates =
+      sources
+      |> Enum.map(fn
+        %{external_published_at: timestamp} -> timestamp
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    case publication_dates do
+      [] -> article.updated_at || article.inserted_at || now
+      dates -> Enum.max_by(dates, &DateTime.to_unix/1)
+    end
+  end
+
+  defp publication_timestamp(%{article: article}, now),
+    do: article.updated_at || article.inserted_at || now
 
   defp clamp_score(score) when is_integer(score), do: score |> max(0) |> min(100)
   defp clamp_score(score) when is_float(score), do: score |> round() |> clamp_score()

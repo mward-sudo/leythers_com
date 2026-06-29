@@ -2,6 +2,7 @@ defmodule LeythersComWeb.PageControllerTest do
   use LeythersComWeb.ConnCase
 
   alias LeythersCom.Content
+  alias LeythersCom.Intelligence.EditorialOrchestrator
 
   test "GET /", %{conn: conn} do
     conn = get(conn, ~p"/")
@@ -18,6 +19,11 @@ defmodule LeythersComWeb.PageControllerTest do
         author_type: "ai_editor",
         status: "published"
       })
+
+    assert {:ok, %{decision_count: count}} =
+             EditorialOrchestrator.refresh_homepage_layout(llm_enabled: false)
+
+    assert count >= 1
 
     conn = get(conn, ~p"/")
     html = html_response(conn, 200)
