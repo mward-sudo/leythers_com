@@ -96,11 +96,19 @@ config :leythers_com, :llm,
 
 config :leythers_com, :homepage_ranking,
   llm_enabled: true,
-  llm_candidate_limit: 4,
+  llm_candidate_limit: 1,
   llm_cooldown_seconds: 1_800,
+  llm_timeout_ms: 2_500,
   recency_weight: 0.45,
   importance_weight: 0.55,
   max_age_hours: 72
+
+config :leythers_com, :editorial_orchestration,
+  source_limit: 20,
+  homepage_size: 12,
+  refresh_cooldown_seconds: 300,
+  async_source_refresh: true,
+  prompt_version: "homepage_ranker_v1"
 
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
@@ -111,10 +119,23 @@ config :leythers_com, Oban,
   plugins: [Oban.Plugins.Pruner],
   queues: [default: 10, ingestion: 5, intelligence: 2]
 
+# Configure real web feeds for ingestion
+config :leythers_com, :ingestion_feeds, [
+  %{
+    url: "https://www.bbc.co.uk/sport/rugby-league/rss.xml",
+    origin_provider: "bbc_rugby_league"
+  },
+  %{
+    url: "https://www.seriousaboutrl.com/feed/",
+    origin_provider: "serious_about_rl"
+  }
+]
+
 # Configure Quantum scheduler
 config :leythers_com, LeythersCom.Scheduler,
   jobs: [
-    {"@daily", {LeythersCom.Ingestion.SourceLinkHealthChecker, :check_all_raw_sources, []}}
+    {"@daily", {LeythersCom.Ingestion.SourceLinkHealthChecker, :check_all_raw_sources, []}},
+    {"*/30 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}}
   ]
 
 # Import environment specific config. This must remain at the bottom

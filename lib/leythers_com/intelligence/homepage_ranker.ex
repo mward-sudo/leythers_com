@@ -10,8 +10,9 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
 
   @default_config [
     llm_enabled: true,
-    llm_candidate_limit: 4,
+    llm_candidate_limit: 1,
     llm_cooldown_seconds: 1_800,
+    llm_timeout_ms: 2_500,
     recency_weight: 0.45,
     importance_weight: 0.55,
     max_age_hours: 72
@@ -45,9 +46,10 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     now = DateTime.utc_now()
     recency = recency_score(entry.article, now, config)
 
-    importance =
-      importance_score(entry, llm_candidate?, config)
-      |> clamp_score()
+    {importance, importance_source} =
+      entry
+      |> importance_score(llm_candidate?, config)
+      |> normalize_importance_score()
 
     hybrid =
       (recency * config[:recency_weight] + importance * config[:importance_weight])
@@ -56,6 +58,7 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     entry
     |> Map.put(:recency_score, recency)
     |> Map.put(:importance_score, importance)
+    |> Map.put(:importance_source, importance_source)
     |> Map.put(:hybrid_score, hybrid)
   end
 
@@ -63,39 +66,69 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     if config[:llm_enabled] do
       cached_or_generated_importance(entry, config)
     else
-      deterministic_importance(entry)
+      {:deterministic, deterministic_importance(entry)}
     end
   end
 
-  defp importance_score(entry, false, _config), do: deterministic_importance(entry)
+  defp importance_score(entry, false, _config),
+    do: {:deterministic, deterministic_importance(entry)}
 
   defp cached_or_generated_importance(entry, config) do
     article_id = entry.article.id
     cooldown = config[:llm_cooldown_seconds]
 
     case cached_importance(article_id, cooldown) do
-      {:ok, score} ->
-        score
+      {:ok, source, score} ->
+        {normalize_cached_source(source), score}
 
       :miss ->
-        score = generate_importance(entry, config)
-        put_cached_importance(article_id, score)
-        score
+        {source, score} = generate_importance(entry, config)
+        put_cached_importance(article_id, score, source)
+        {source, score}
     end
   end
 
   defp generate_importance(entry, config) do
     case config[:importance_generator] do
       generator when is_function(generator, 1) ->
-        generator.(entry)
+        run_generator_with_timeout(generator, entry, config)
 
       _ ->
-        prompt = importance_prompt(entry)
+        run_llm_with_timeout(entry, config)
+    end
+  end
 
-        case LLMClient.generate(prompt) do
-          {:ok, %{text: text}} -> parse_importance_score(text) || deterministic_importance(entry)
-          {:error, _reason} -> deterministic_importance(entry)
-        end
+  defp run_generator_with_timeout(generator, entry, config) do
+    timeout_ms = config[:llm_timeout_ms]
+
+    case run_with_timeout(fn -> generator.(entry) end, timeout_ms) do
+      {:ok, score} -> {:llm_generated, score}
+      :timeout -> {:deterministic, deterministic_importance(entry)}
+    end
+  end
+
+  defp run_llm_with_timeout(entry, config) do
+    timeout_ms = config[:llm_timeout_ms]
+    prompt = importance_prompt(entry)
+
+    case run_with_timeout(fn -> LLMClient.generate(prompt) end, timeout_ms) do
+      {:ok, {:ok, %{text: text}}} ->
+        {:llm_generated, parse_importance_score(text) || deterministic_importance(entry)}
+
+      {:ok, {:error, _reason}} ->
+        {:deterministic, deterministic_importance(entry)}
+
+      :timeout ->
+        {:deterministic, deterministic_importance(entry)}
+    end
+  end
+
+  defp run_with_timeout(fun, timeout_ms) do
+    task = Task.async(fun)
+
+    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> {:ok, result}
+      _ -> :timeout
     end
   end
 
@@ -150,14 +183,25 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
   defp clamp_score(score) when is_float(score), do: score |> round() |> clamp_score()
   defp clamp_score(_score), do: 50
 
+  defp normalize_importance_score({source, score}) do
+    {clamp_score(score), source}
+  end
+
   defp cached_importance(article_id, cooldown_seconds) do
     ensure_cache_table!()
     now_seconds = System.system_time(:second)
 
     case :ets.lookup(@cache_table, article_id) do
+      [{^article_id, score, source, saved_at}] ->
+        if now_seconds - saved_at <= cooldown_seconds do
+          {:ok, source, score}
+        else
+          :miss
+        end
+
       [{^article_id, score, saved_at}] ->
         if now_seconds - saved_at <= cooldown_seconds do
-          {:ok, score}
+          {:ok, :llm_generated, score}
         else
           :miss
         end
@@ -167,11 +211,15 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     end
   end
 
-  defp put_cached_importance(article_id, score) do
+  defp put_cached_importance(article_id, score, source) do
     ensure_cache_table!()
-    :ets.insert(@cache_table, {article_id, score, System.system_time(:second)})
+    :ets.insert(@cache_table, {article_id, score, source, System.system_time(:second)})
     :ok
   end
+
+  defp normalize_cached_source(:llm_generated), do: :llm_cached
+  defp normalize_cached_source("llm_generated"), do: :llm_cached
+  defp normalize_cached_source(_source), do: :deterministic
 
   defp ensure_cache_table! do
     case :ets.whereis(@cache_table) do

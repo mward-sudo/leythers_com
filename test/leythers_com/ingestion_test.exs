@@ -34,6 +34,33 @@ defmodule LeythersCom.IngestionTest do
       assert {:ok, %RawSource{}} = Ingestion.upsert_raw_source(@valid_attrs)
     end
 
+    test "triggers editorial orchestration refresh telemetry" do
+      handler_id = "ingestion-editorial-trigger-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:leythers_com, :intelligence, :editorial_orchestration, :stop],
+          fn event, measurements, metadata, test_pid ->
+            send(test_pid, {:telemetry_event, event, measurements, metadata})
+          end,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      assert {:ok, %RawSource{}} = Ingestion.upsert_raw_source(@valid_attrs)
+
+      assert_receive {:telemetry_event,
+                      [:leythers_com, :intelligence, :editorial_orchestration, :stop],
+                      measurements, metadata}
+
+      assert measurements.count == 1
+      assert measurements.duration > 0
+      assert metadata.result == :ok
+      assert metadata.triggered_by == :source_update
+    end
+
     test "returns existing record unchanged when url already exists" do
       {:ok, original} = Ingestion.upsert_raw_source(@valid_attrs)
 

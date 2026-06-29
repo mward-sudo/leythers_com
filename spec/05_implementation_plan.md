@@ -27,6 +27,25 @@ The implementation strategy is:
 5. LLM is authoritative for editorial ranking/update decisions, with strict invocation controls and
    full audit trails.
 
+## Immediate Execution Priority
+
+Goals:
+
+1. Prioritize real-data reliability before adding non-critical tooling surfaces.
+
+Tasks:
+
+1. Expand and verify live web ingestion sources (RSS/HTML) with production-like payloads.
+2. Harden extraction quality against noisy markup and partial feeds.
+3. Improve source health checks, retry policy, and canonical URL handling for real-world failures.
+4. Add provenance validation checks to ensure stored source metadata matches fetched content.
+5. Keep dashboard enhancements deferred until ingestion coverage and data quality gates are stable.
+
+Deliverables:
+
+1. Homepage and article workflows are fed by dependable real web data.
+2. Operational confidence in ingestion quality is established before dashboard expansion.
+
 ## Phase A: Core Platform Baseline (Completed)
 
 Goals:
@@ -145,6 +164,8 @@ Tasks:
 2. Track publish-source mix (manual vs automated) and relative performance.
 3. Add monthly review routine for budget usage vs output quality.
 4. Use findings to adjust voice rules, ingestion sources, and LLM fallback thresholds.
+5. Add an editorial diagnostics dashboard in admin for ranking runs, LLM timeouts/fallback rate,
+   and ingestion freshness/health trends.
 
 Deliverables:
 

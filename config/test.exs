@@ -43,6 +43,13 @@ config :leythers_com, :homepage_ranking,
   importance_weight: 0.55,
   max_age_hours: 72
 
+config :leythers_com, :editorial_orchestration,
+  source_limit: 20,
+  homepage_size: 12,
+  refresh_cooldown_seconds: 0,
+  async_source_refresh: false,
+  prompt_version: "homepage_ranker_test"
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 
