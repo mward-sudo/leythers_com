@@ -24,6 +24,21 @@ config :leythers_com, LeythersComWeb.Endpoint,
   http: [port: System.get_env("PORT", "4000") |> String.to_integer()]
 
 if config_env() == :prod do
+  env_bool = fn key, default ->
+    case System.get_env(key) do
+      nil -> default
+      value when value in ["1", "true", "TRUE", "yes", "YES"] -> true
+      _value -> false
+    end
+  end
+
+  env_int = fn key, default ->
+    case System.get_env(key) do
+      nil -> default
+      value -> String.to_integer(value)
+    end
+  end
+
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """
@@ -31,15 +46,34 @@ if config_env() == :prod do
       For example: ecto://USER:PASS@HOST/DATABASE
       """
 
-  maybe_ipv6 = if System.get_env("ECTO_IPV6") in ~w(true 1), do: [:inet6], else: []
+  database_ssl = env_bool.("DATABASE_SSL", true)
+  maybe_ipv6 = if env_bool.("ECTO_IPV6", false), do: [:inet6], else: []
+  pool_size = env_int.("POOL_SIZE", 5)
+  queue_target = env_int.("DB_QUEUE_TARGET_MS", 5000)
+  queue_interval = env_int.("DB_QUEUE_INTERVAL_MS", 20_000)
+  use_unnamed_prepare = env_bool.("DB_USE_UNNAMED_PREPARE", true)
 
   config :leythers_com, LeythersCom.Repo,
-    # ssl: true,
+    ssl: database_ssl,
     url: database_url,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "10"),
+    pool_size: pool_size,
+    queue_target: queue_target,
+    queue_interval: queue_interval,
+    prepare: if(use_unnamed_prepare, do: :unnamed, else: :named),
     # For machines with several cores, consider starting multiple pools of `pool_size`
     # pool_count: 4,
     socket_options: maybe_ipv6
+
+  config :leythers_com, Oban,
+    repo: LeythersCom.Repo,
+    plugins: [
+      {Oban.Plugins.Pruner, max_age: env_int.("OBAN_PRUNER_MAX_AGE_SECONDS", 60 * 60 * 24 * 7)}
+    ],
+    queues: [
+      default: env_int.("OBAN_QUEUE_DEFAULT", 5),
+      ingestion: env_int.("OBAN_QUEUE_INGESTION", 2),
+      intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 1)
+    ]
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
