@@ -5,16 +5,19 @@
 Build an ultra-low-cost, high-performance Leigh Leopards fan content platform that:
 
 - aggregates rugby league source material,
-- generates publishable summaries/articles,
+- uses LLM judgment sparingly for high-value editorial decisions,
+- generates and updates publishable summaries/articles with a distinct fan voice,
 - supports immediate human-authored publishing,
 - stays inside strict monthly spend limits.
 
 ## Primary Objectives
 
-1. Publish reliably from both AI-assisted and manual authoring paths.
-2. Preserve source attribution for trust and auditability.
-3. Enforce predictable operating costs.
-4. Keep architecture simple enough for a small team.
+1. Use LLM decisions where they provide clear editorial value (home layout, article create/update),
+   while minimizing paid-token usage.
+2. Publish reliably from both AI-assisted and manual authoring paths.
+3. Preserve source attribution and decision auditability for trust.
+4. Enforce predictable operating costs.
+5. Keep architecture simple enough for a small team.
 
 ## Explicit Constraints
 
@@ -37,3 +40,9 @@ Build an ultra-low-cost, high-performance Leigh Leopards fan content platform th
 2. Every AI-generated article should preserve source linkage where applicable.
 3. Manual fast-track publishing must not require background jobs.
 4. Cost ledger writes must be idempotent per day bucket.
+5. Homepage ordering must use a hybrid of importance and recency.
+6. Rumours must be explicitly labeled and handled as rumours in generated content.
+7. Automated ingestion-to-publishing runs are fully automatic by default.
+8. LLM decisions must be auditable (prompt version, inputs, rationale, token/cost metadata).
+9. Generated editorial tone should be rough fan style with irreverent humour while preserving core
+	factual accuracy.

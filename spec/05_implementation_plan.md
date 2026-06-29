@@ -1,118 +1,152 @@
-# Implementation Plan
+# Implementation Plan (Product-Aligned Roadmap)
 
-## Phase 0: Foundation and Dependencies
+## Product Intent
+
+Leythers.com exists to aggregate Leigh Leopards news and rumours, then present that material in a
+distinct editorial voice.
+
+The implementation strategy is:
+
+1. Keep the manual publishing path first-class and always available.
+2. Use low/no-cost aggregation and summarization first.
+3. Use LLM as the key decision-maker for homepage layout and article create/update decisions, but
+   invoke it only when value justifies cost.
+4. Start with a single technical author workflow, while designing data and permissions so future
+   multi-author support can be added without schema churn.
+
+## Operating Principles
+
+1. Cost-first execution: prefer deterministic pipelines, cached transforms, and reusable summaries
+   before paid model calls.
+2. Voice consistency over raw volume: publishing quality and recognizable tone are more important
+   than frequent low-quality output.
+3. Human override always available: the admin can always publish directly without queue/model
+   dependency.
+4. Progressive complexity: keep initial CMS/editorial workflow simple, then add collaboration only
+   when needed.
+5. LLM is authoritative for editorial ranking/update decisions, with strict invocation controls and
+   full audit trails.
+
+## Phase A: Core Platform Baseline (Completed)
 
 Goals:
 
-1. Align runtime and dependencies with target stack.
-2. Prepare app supervision for queue/scheduler.
+1. Establish dependable ingestion, publishing, and budget primitives.
+
+Delivered:
+
+1. Core tables and schemas for sources, articles, attribution links, and cost ledgers.
+2. Manual fast-track publish flow with optional source links.
+3. Scheduled ingestion with canonicalization and source health checks.
+4. Budget guardrails for AI generation (monthly cap + near-cap warning semantics).
+5. Authenticated admin surfaces, provenance and cost visibility, telemetry, dead-letter retries, and
+   deployment hardening.
+
+## Phase B: Editorial Voice Engine (Next Priority)
+
+Goals:
+
+1. Make the site output feel intentionally "Leythers" rather than generic summaries.
 
 Tasks:
 
-1. Upgrade Elixir/OTP runtime target in project docs/tooling.
-2. Add dependencies: Oban, Quantum, Floki.
-3. Configure Oban + Quantum in config files.
-4. Wire Oban and Quantum children in application supervision tree.
+1. Define an explicit voice guide (rough fan style, irreverent humour, sentence rhythm, rumour
+   framing rules).
+2. Add a `voice profile` configuration layer that can be applied to manual and generated content.
+3. Implement deterministic style transforms that run without LLM cost where possible.
+4. Add preview tooling in admin to compare "raw summary" vs "voice-adjusted" output.
+5. Add tests to lock down headline/body style constraints, rumour labeling behavior, and prevent
+   drift.
 
 Deliverables:
 
-1. Build passes.
-2. App boots with all required children.
+1. Consistent site voice across manually authored and automated content.
+2. Voice rules are versioned, testable, and easy to tune.
 
-## Phase 1: Data Layer (Step 1 from Prompt)
+## Phase C: Cost-Optimized Aggregation Pipeline (Next Priority)
 
 Goals:
 
-1. Establish core tables and Ecto schemas.
+1. Maximize useful content coverage while minimizing paid-token spend.
 
 Tasks:
 
-1. Generate and implement migrations for:
-   - `raw_sources`
-   - `permanent_articles`
-   - `article_sources`
-   - `cost_ledgers`
-2. Implement schemas in:
-   - `lib/leythers_com/ingestion/raw_source.ex`
-   - `lib/leythers_com/content/permanent_article.ex`
-   - `lib/leythers_com/content/article_source.ex`
-   - `lib/leythers_com/intelligence/cost_ledger.ex`
-3. Add changesets with constraints and validations.
-4. Add context-level CRUD/upsert entry points.
+1. Introduce a summarization strategy ladder:
+   - Rule-based extraction and truncation (free)
+   - Heuristic/templated synthesis (free)
+   - LLM fallback only when confidence/quality is below threshold
+2. Add source-level and article-level cache keys to avoid repeated paid generation.
+3. Add confidence/quality scoring to decide when LLM is justified.
+4. Track per-article generation path (`free` vs `llm`) and cost metadata for reporting.
+5. Add admin controls to disable all paid generation instantly.
+6. Add adaptive scheduling so source refresh cadence balances cost vs news currency.
 
 Deliverables:
 
-1. `mix ecto.migrate` succeeds.
-2. Changesets enforce domain rules.
+1. Most routine aggregation runs without paid model calls.
+2. LLM usage is intentional, explainable, and measurable.
 
-## Phase 2: Manual Fast-Track Publish
+## Phase D: LLM Editorial Orchestrator (Next Priority)
 
 Goals:
 
-1. Provide immediate human publishing flow.
+1. Make LLM-driven editorial decisions automatic, sparse, and auditable.
 
 Tasks:
 
-1. Build admin LiveView form.
-2. Add slug generation service.
-3. Insert article and optional source links synchronously in a transaction.
-4. Ensure manual path allows publish with zero source links.
-5. Add tests for success/failure/constraint paths.
+1. Implement homepage layout orchestration with hybrid ranking:
+   - Importance judged by LLM
+   - Recency from deterministic scoring
+   - Combined ranking policy for final ordering
+2. Trigger layout recomputation when sources are updated, with cooldown/rate limits to optimize cost
+   vs freshness.
+3. Implement article lifecycle orchestration:
+   - Update recent article by default when new source is same story cluster
+   - Create a new article only when significance threshold is exceeded
+4. Encode significance threshold policy with explicit feature flags and tunable weights.
+5. Enforce fully automatic mode (no approval gate) while preserving manual override tools.
+6. Persist decision logs per run: prompt version, inputs, output rationale, tokens, cost, and chosen
+   action.
 
 Deliverables:
 
-1. Manual publish path works without Oban/LLM dependency.
+1. Homepage ordering and article create/update behavior run automatically after source refresh.
+2. LLM usage remains sparse via gating/cooldowns while retaining editorial quality.
+3. All automated decisions are traceable in admin diagnostics.
 
-## Phase 3: Ingestion Pipeline
+## Phase E: Lightweight CMS Evolution (Single Author -> Small Team)
 
 Goals:
 
-1. Enable scheduled source ingestion and dedupe.
+1. Keep solo publishing friction low now, with a clear future path for contributors.
 
 Tasks:
 
-1. Define provider behaviors and adapters.
-2. Implement Req + Floki parsing workers.
-3. Schedule jobs with Quantum.
-4. Persist `raw_sources` with first-seen-preserving dedupe policy.
-5. Canonicalize URLs and strip tracking query parameters.
-6. Add periodic source-link health checker and URL update policy for broken/redirected links.
+1. Keep single-admin workflow as default (current mode).
+2. Introduce optional draft states and editorial notes for in-progress stories.
+3. Add structured attribution and rumour confidence annotations.
+4. Prepare permission model extension points for future contributor/editor roles.
+5. Add audit-friendly change history for article edits and publish actions.
 
 Deliverables:
 
-1. Repeatable ingestion with idempotent outcomes.
+1. Solo creator flow remains fast.
+2. Collaboration features can be enabled later without reworking core data model.
 
-## Phase 4: Intelligence and Publishing Automation
+## Phase F: Audience and Product Fit Feedback Loop
 
 Goals:
 
-1. Add generation with budget enforcement.
+1. Learn which formats and topics resonate, then tune the voice and automation accordingly.
 
 Tasks:
 
-1. Implement LLM client abstraction.
-2. Add monthly cap checker against `cost_ledgers`.
-3. Emit near-cap warnings at 80% of monthly cap.
-4. Implement single-month admin override with explicit temporary cap.
-5. Generate article body/title and publish immediately (`published`).
-6. Enforce at least one linked source for AI-generated publications.
-7. Track daily token/cost rollups.
+1. Add metrics for article engagement by content type (news, rumour, opinion, match reaction).
+2. Track publish-source mix (manual vs automated) and relative performance.
+3. Add monthly review routine for budget usage vs output quality.
+4. Use findings to adjust voice rules, ingestion sources, and LLM fallback thresholds.
 
 Deliverables:
 
-1. Generation auto-publishing works while under budget.
-2. Over-budget mode blocks generation only.
-
-## Phase 5: Hardening
-
-Goals:
-
-1. Improve reliability and operability.
-
-Tasks:
-
-1. Add telemetry dashboards and alerts.
-2. Add dead-letter/retry review tooling.
-3. Add admin views for source/article provenance and cost history.
-4. Finalize deployment settings for Supabase/Neon constraints.
-5. Add article edit workflow that increments `version` on each published update.
+1. A measurable editorial feedback loop tied to cost and quality outcomes.
+2. Clear criteria for when to expand beyond single-author mode.
