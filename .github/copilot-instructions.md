@@ -45,7 +45,26 @@ If any Primary Context File is missing or unreadable, stop and ask the user to p
 - Promote the PR from draft when all tests pass and `mix precommit` is clean.
 - Close the issue via the PR description (`Closes #42`) so GitHub links and closes it automatically on merge.
 
-## Delivery Expectations
+### Commits
+- Commit after every meaningful, working state: failing tests, passing tests, refactor.
+- Commit messages must be a single lowercase line, 72 chars max, imperative mood (e.g. `add failing test for article changeset`).
+- Never bundle unrelated changes in one commit.
+- Run `mix precommit` before any commit and fix all issues first.
+
+### Autopilot mode
+- Work autonomously through the task plan without asking for confirmation at each step.
+- Stop and ask the user to verify before: merging to `main`, deleting branches, making destructive schema changes, or any action that is hard to reverse.
+- Stop and report progress whenever a phase boundary is reached (as defined in `spec/05_implementation_plan.md`) or when all tests for a feature branch are passing and the PR is ready to promote from draft.
+
+## Tool usage
+- Prefer VS Code and GitHub Copilot tools over raw CLI commands for all operations where a tool equivalent exists.
+- Fall back to CLI only when a tool is unavailable or demonstrably insufficient.
+
+## Security
+- Follow OWASP Top 10 practices throughout.
+- For any authentication or authorisation feature: use Phoenix's built-in `mix phx.gen.auth` generator as the foundation; never roll bespoke session or password handling.
+- Secrets must never be committed; use environment variables and `config/runtime.exs`.
+- Always validate and sanitise data at system boundaries (controllers, LiveView event handlers, context public APIs).
 
 1. Keep changes production-oriented and testable.
 2. Respect existing project conventions in `AGENTS.md`.
