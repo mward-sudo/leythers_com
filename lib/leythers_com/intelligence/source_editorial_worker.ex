@@ -19,6 +19,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Repo
 
   @default_batch_size 20
+  @default_max_batches_per_run 20
   @default_significance_threshold 70
   @default_prompt_version "source_editorial_v1"
 
@@ -40,23 +41,68 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   defp process_pending_sources(args) do
     source_limit = Map.get(args, "source_limit", default_batch_size())
+    max_batches = Map.get(args, "max_batches", max_batches_per_run())
+    drain_backlog? = Map.get(args, "drain_backlog", true)
     run_id = Ecto.UUID.generate()
 
-    pending_sources =
-      RawSource
-      |> where([source], source.status == "pending")
-      |> order_by([source], asc: source.external_published_at, asc: source.inserted_at)
-      |> limit(^source_limit)
-      |> Repo.all()
-
-    pending_sources
-    |> cluster_sources()
-    |> Enum.each(&publish_cluster(&1, run_id))
+    process_batches(run_id, source_limit, max_batches, drain_backlog?)
 
     :ok
   end
 
-  defp publish_cluster([], _run_id), do: :ok
+  defp process_batches(_run_id, _source_limit, max_batches, _drain_backlog?)
+       when max_batches <= 0,
+       do: :ok
+
+  defp process_batches(run_id, source_limit, max_batches, drain_backlog?) do
+    pending_sources = fetch_pending_sources(source_limit)
+
+    case pending_sources do
+      [] ->
+        :ok
+
+      _ ->
+        {processed_count, budget_blocked?} = process_batch(pending_sources, run_id)
+
+        cond do
+          budget_blocked? ->
+            :ok
+
+          not drain_backlog? ->
+            :ok
+
+          processed_count <= 0 ->
+            :ok
+
+          true ->
+            process_batches(run_id, source_limit, max_batches - 1, true)
+        end
+    end
+  end
+
+  defp fetch_pending_sources(source_limit) do
+    RawSource
+    |> where([source], source.status == "pending")
+    |> order_by([source], asc: source.external_published_at, asc: source.inserted_at)
+    |> limit(^source_limit)
+    |> Repo.all()
+  end
+
+  defp process_batch(pending_sources, run_id) do
+    pending_sources
+    |> cluster_sources()
+    |> Enum.reduce_while({0, false}, fn cluster_sources, {processed_total, _} ->
+      case publish_cluster(cluster_sources, run_id) do
+        {:ok, processed_count} ->
+          {:cont, {processed_total + processed_count, false}}
+
+        {:halt, :budget_blocked} ->
+          {:halt, {processed_total, true}}
+      end
+    end)
+  end
+
+  defp publish_cluster([], _run_id), do: {:ok, 0}
 
   defp publish_cluster(cluster_sources, run_id) do
     source_ids = Enum.map(cluster_sources, & &1.id)
@@ -81,7 +127,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
              significant_change: significance_score >= threshold
            ) do
         {:ok, action, article} ->
-          mark_sources_processed(source_ids)
+          processed_count = mark_sources_processed(source_ids)
           _ = EditorialOrchestrator.trigger_source_update_refresh()
 
           persist_decision(
@@ -92,7 +138,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             llm_cost_attrs
           )
 
-          :ok
+          {:ok, processed_count}
 
         _ ->
           persist_decision(
@@ -103,7 +149,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             llm_cost_attrs
           )
 
-          :ok
+          {:ok, 0}
       end
     else
       persist_decision(
@@ -114,17 +160,16 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         zero_cost_attrs()
       )
 
-      :ok
+      {:halt, :budget_blocked}
     end
   end
 
-  defp mark_sources_processed([]), do: :ok
+  defp mark_sources_processed([]), do: 0
 
   defp mark_sources_processed(source_ids) do
     from(source in RawSource, where: source.id in ^source_ids)
     |> Repo.update_all(set: [status: "processed"])
-
-    :ok
+    |> elem(0)
   end
 
   defp build_article_attrs(cluster_sources) do
@@ -338,6 +383,12 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:source_batch_size, @default_batch_size)
+  end
+
+  defp max_batches_per_run do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:max_batches_per_run, @default_max_batches_per_run)
   end
 
   defp significance_threshold do

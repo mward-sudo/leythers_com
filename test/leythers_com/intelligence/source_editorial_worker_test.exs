@@ -18,6 +18,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     Application.put_env(:leythers_com, :intelligence_generation,
       auto_generation_enabled: true,
       source_batch_size: 20,
+      max_batches_per_run: 20,
       significance_threshold: 70,
       prompt_version: "source_editorial_test",
       llm_draft_enabled: false,
@@ -183,5 +184,48 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
     assert length(ai_articles) == 2
+  end
+
+  test "drains pending backlog across multiple batches in one run" do
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 2,
+      max_batches_per_run: 10,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: false,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    for {suffix, minute} <- [{"one", 10}, {"two", 20}, {"three", 30}, {"four", 40}, {"five", 50}] do
+      assert {:ok, _source} =
+               Ingestion.create_raw_source(%{
+                 title: "Leigh backlog story #{suffix}",
+                 url: "https://example.com/backlog-#{suffix}",
+                 body_summary: "Backlog summary for #{suffix}",
+                 origin_provider: "provider_#{suffix}",
+                 external_published_at:
+                   ~U[2026-06-29 16:00:00.000000Z] |> DateTime.add(minute * 60, :second)
+               })
+    end
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    pending_count =
+      Ingestion.list_raw_sources(status: "pending")
+      |> length()
+
+    ai_article_count =
+      Content.list_articles()
+      |> Enum.filter(&(&1.author_type == "ai_editor"))
+      |> length()
+
+    decision_count =
+      Intelligence.recent_article_generation_decisions(20)
+      |> Enum.count(&(&1.decision_action in ["created", "updated"]))
+
+    assert pending_count == 0
+    assert ai_article_count == 5
+    assert decision_count == 5
   end
 end

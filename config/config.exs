@@ -113,6 +113,7 @@ config :leythers_com, :editorial_orchestration,
 config :leythers_com, :intelligence_generation,
   auto_generation_enabled: true,
   source_batch_size: 20,
+  max_batches_per_run: 20,
   significance_threshold: 70,
   prompt_version: "source_editorial_v1",
   llm_draft_enabled: true,
@@ -160,7 +161,8 @@ config :leythers_com, LeythersCom.Scheduler,
   jobs: [
     {"@daily", {LeythersCom.Ingestion.SourceLinkHealthChecker, :check_all_raw_sources, []}},
     {"*/30 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}},
-    {"@hourly", {LeythersCom.Ingestion, :refresh_stale_feeds, []}}
+    {"@hourly", {LeythersCom.Ingestion, :refresh_stale_feeds, []}},
+    {"*/10 * * * *", {LeythersCom.Intelligence.SourceEditorialWorker, :enqueue, [%{}]}}
   ]
 
 # Import environment specific config. This must remain at the bottom
