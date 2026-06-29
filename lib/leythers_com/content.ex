@@ -1,4 +1,6 @@
 defmodule LeythersCom.Content do
+  @moduledoc false
+
   alias LeythersCom.Repo
   alias LeythersCom.Content.PermanentArticle
 

@@ -1,4 +1,6 @@
 defmodule LeythersCom.Content.Slug do
+  @moduledoc false
+
   import Ecto.Query
 
   alias LeythersCom.Repo

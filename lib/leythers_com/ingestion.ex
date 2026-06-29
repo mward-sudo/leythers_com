@@ -1,4 +1,6 @@
 defmodule LeythersCom.Ingestion do
+  @moduledoc false
+
   import Ecto.Query
 
   alias LeythersCom.Repo
