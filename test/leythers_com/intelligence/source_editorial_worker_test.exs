@@ -5,6 +5,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
   alias LeythersCom.Ingestion
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Intelligence
+  alias LeythersCom.Intelligence.ArticleGenerationDecision
   alias LeythersCom.Intelligence.SourceEditorialWorker
 
   setup do
@@ -18,6 +19,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       auto_generation_enabled: true,
       source_batch_size: 20,
       significance_threshold: 70,
+      prompt_version: "source_editorial_test",
       llm_draft_enabled: false,
       llm_cost_per_1k_tokens_gbp: "0.000000"
     )
@@ -54,6 +56,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert article.body =~ "Automated feed digest"
     assert article.status == "published"
 
+    [decision] = Intelligence.recent_article_generation_decisions(1)
+    assert %ArticleGenerationDecision{} = decision
+    assert decision.decision_action == "created"
+    assert decision.source_count == 2
+    assert decision.prompt_version == "source_editorial_test"
+    assert decision.permanent_article_id == article.id
+
     assert %RawSource{status: "processed"} = Repo.get!(RawSource, source_one.id)
     assert %RawSource{status: "processed"} = Repo.get!(RawSource, source_two.id)
   end
@@ -83,6 +92,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     [source] = Ingestion.list_raw_sources(status: "pending")
     assert source.title =~ "transfer rumour"
+
+    [decision] = Intelligence.recent_article_generation_decisions(1)
+    assert decision.decision_action == "skipped_budget"
+    assert decision.source_count == 1
+    assert is_nil(decision.permanent_article_id)
 
     assert Decimal.compare(Intelligence.monthly_spend(Date.utc_today()), Decimal.new("20.00")) ==
              :eq
@@ -119,6 +133,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     [updated_article] = ai_articles
     assert updated_article.id == first_article.id
     assert updated_article.version == first_article.version + 1
+
+    decisions = Intelligence.recent_article_generation_decisions(5)
+    assert Enum.any?(decisions, &(&1.decision_action == "created"))
+    assert Enum.any?(decisions, &(&1.decision_action == "updated"))
   end
 
   test "creates a new ai article when cluster significance meets threshold" do

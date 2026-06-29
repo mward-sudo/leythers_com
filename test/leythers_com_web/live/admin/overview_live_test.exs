@@ -47,16 +47,34 @@ defmodule LeythersComWeb.Admin.OverviewLiveTest do
           estimated_cost_gbp: Decimal.new("1.230000")
         })
 
+      {:ok, _decision} =
+        Intelligence.create_article_generation_decision(%{
+          run_id: Ecto.UUID.generate(),
+          decision_action: "created",
+          source_ids: [source.id],
+          source_count: 1,
+          significance_score: 85,
+          significance_threshold: 70,
+          prompt_version: "source_editorial_test",
+          decision_summary: "high significance source cluster",
+          input_tokens: 0,
+          output_tokens: 0,
+          estimated_cost_gbp: Decimal.new("0"),
+          permanent_article_id: nil
+        })
+
       {:ok, view, html} = live(conn, ~p"/admin/overview")
 
       assert html =~ "Admin Overview"
       assert has_element?(view, "#budget-summary")
       assert has_element?(view, "#cost-history")
       assert has_element?(view, "#provenance-history")
+      assert has_element?(view, "#generation-decisions")
       assert has_element?(view, "#dead-letter-jobs")
       assert has_element?(view, "#provenance-history", "Overview Test Article")
       assert has_element?(view, "#provenance-history", "Overview Test Source")
       assert has_element?(view, "#cost-history", "1.230000")
+      assert has_element?(view, "#generation-decisions", "source_editorial_test")
 
       assert_receive {:telemetry_event, [:leythers_com, :web, :admin_overview, :mount, :stop],
                       measurements, metadata}
@@ -67,6 +85,7 @@ defmodule LeythersComWeb.Admin.OverviewLiveTest do
       assert metadata.budget_state in [:under_budget, :near_budget, :over_budget]
       assert metadata.ledger_count >= 1
       assert metadata.article_count >= 1
+      assert metadata.generation_decision_count >= 1
     end
 
     test "lists failed jobs and allows retry", %{conn: conn, user: _user} do

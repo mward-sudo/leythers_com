@@ -17,6 +17,7 @@ defmodule LeythersComWeb.Admin.OverviewLive do
     budget_state = Intelligence.generation_budget_state(today)
     recent_ledgers = Intelligence.recent_cost_ledgers(14)
     recent_articles = Content.list_recent_articles_with_sources(10)
+    recent_generation_decisions = Intelligence.recent_article_generation_decisions(20)
     failed_jobs = Intelligence.list_failed_jobs(25)
 
     :telemetry.execute(
@@ -27,6 +28,7 @@ defmodule LeythersComWeb.Admin.OverviewLive do
         budget_state: budget_state,
         ledger_count: length(recent_ledgers),
         article_count: length(recent_articles),
+        generation_decision_count: length(recent_generation_decisions),
         failed_job_count: length(failed_jobs)
       }
     )
@@ -40,6 +42,7 @@ defmodule LeythersComWeb.Admin.OverviewLive do
      |> assign(:budget_state, budget_state)
      |> assign(:recent_ledgers, recent_ledgers)
      |> assign(:recent_articles, recent_articles)
+     |> assign(:recent_generation_decisions, recent_generation_decisions)
      |> assign(:failed_jobs, failed_jobs)}
   end
 
@@ -175,6 +178,43 @@ defmodule LeythersComWeb.Admin.OverviewLive do
 
         <section
           class="mt-6 rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm"
+          id="generation-decisions"
+        >
+          <h2 class="text-lg font-semibold">Recent Generation Decisions</h2>
+          <p class="mt-1 text-sm text-base-content/70">
+            Auditable create/update/skip actions chosen by source editorial automation.
+          </p>
+
+          <div class="mt-4 overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Action</th>
+                  <th>Sources</th>
+                  <th>Score</th>
+                  <th>Prompt</th>
+                  <th>Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                <%= for decision <- @recent_generation_decisions do %>
+                  <tr id={"generation-decision-#{decision.id}"}>
+                    <td>{format_decision_time(decision.inserted_at)}</td>
+                    <td>{decision.decision_action}</td>
+                    <td>{decision.source_count}</td>
+                    <td>{decision.significance_score}/{decision.significance_threshold}</td>
+                    <td>{decision.prompt_version}</td>
+                    <td>{gbp(decision.estimated_cost_gbp)}</td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section
+          class="mt-6 rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm"
           id="dead-letter-jobs"
         >
           <h2 class="text-lg font-semibold">Failed Jobs (Dead Letter)</h2>
@@ -230,4 +270,10 @@ defmodule LeythersComWeb.Admin.OverviewLive do
   defp budget_badge_class(:under_budget), do: "bg-success/15 text-success"
   defp budget_badge_class(:near_budget), do: "bg-warning/20 text-warning"
   defp budget_badge_class(:over_budget), do: "bg-error/20 text-error"
+
+  defp format_decision_time(%DateTime{} = datetime) do
+    Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
+  end
+
+  defp format_decision_time(_), do: "-"
 end

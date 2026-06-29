@@ -114,6 +114,7 @@ config :leythers_com, :intelligence_generation,
   auto_generation_enabled: true,
   source_batch_size: 20,
   significance_threshold: 70,
+  prompt_version: "source_editorial_v1",
   llm_draft_enabled: true,
   llm_cost_per_1k_tokens_gbp: "0.000000"
 

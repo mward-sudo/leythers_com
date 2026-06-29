@@ -193,8 +193,8 @@ defmodule LeythersCom.IngestionTest do
                  FeedClient
                )
 
-      assert_receive {:telemetry_event, [:leythers_com, :ingestion, :feed_ingest, :stop],
-                      measurements, metadata}
+      {measurements, metadata} =
+        wait_for_feed_ingest_event("telemetry_provider", 5)
 
       assert measurements.duration > 0
       assert measurements.count == 1
@@ -341,6 +341,20 @@ defmodule LeythersCom.IngestionTest do
       assert metadata.attempted == 1
       assert metadata.enqueued == 1
       assert metadata.failed == 0
+    end
+  end
+
+  defp wait_for_feed_ingest_event(_origin_provider, 0),
+    do: flunk("missing expected feed ingest telemetry")
+
+  defp wait_for_feed_ingest_event(origin_provider, attempts_left) do
+    assert_receive {:telemetry_event, [:leythers_com, :ingestion, :feed_ingest, :stop],
+                    measurements, metadata}
+
+    if metadata.origin_provider == origin_provider do
+      {measurements, metadata}
+    else
+      wait_for_feed_ingest_event(origin_provider, attempts_left - 1)
     end
   end
 end

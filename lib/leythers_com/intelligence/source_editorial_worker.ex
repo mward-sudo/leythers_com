@@ -20,6 +20,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   @default_batch_size 20
   @default_significance_threshold 70
+  @default_prompt_version "source_editorial_v1"
 
   def enqueue(attrs \\ %{}) when is_map(attrs) do
     attrs
@@ -39,6 +40,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   defp process_pending_sources(args) do
     source_limit = Map.get(args, "source_limit", default_batch_size())
+    run_id = Ecto.UUID.generate()
 
     pending_sources =
       RawSource
@@ -49,32 +51,69 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
     pending_sources
     |> cluster_sources()
-    |> Enum.each(&publish_cluster/1)
+    |> Enum.each(&publish_cluster(&1, run_id))
 
     :ok
   end
 
-  defp publish_cluster([]), do: :ok
+  defp publish_cluster([], _run_id), do: :ok
 
-  defp publish_cluster(cluster_sources) do
+  defp publish_cluster(cluster_sources, run_id) do
+    source_ids = Enum.map(cluster_sources, & &1.id)
+    significance_score = significance_score(cluster_sources)
+    threshold = significance_threshold()
+    rumour? = rumour_cluster?(cluster_sources)
+
+    decision_attrs = %{
+      run_id: run_id,
+      source_ids: source_ids,
+      source_count: length(source_ids),
+      significance_score: significance_score,
+      significance_threshold: threshold,
+      prompt_version: prompt_version()
+    }
+
     if Intelligence.ensure_generation_allowed!(Date.utc_today()) == :ok do
-      attrs = build_article_attrs(cluster_sources)
-      source_ids = Enum.map(cluster_sources, & &1.id)
+      {attrs, llm_cost_attrs} = build_article_attrs(cluster_sources)
 
       case Content.publish_or_update_ai_article(attrs, source_ids,
-             rumour: rumour_cluster?(cluster_sources),
-             significant_change: significant_change_cluster?(cluster_sources)
+             rumour: rumour?,
+             significant_change: significance_score >= threshold
            ) do
-        {:ok, _action, _article} ->
+        {:ok, action, article} ->
           mark_sources_processed(source_ids)
           _ = EditorialOrchestrator.trigger_source_update_refresh()
+
+          persist_decision(
+            decision_attrs,
+            to_string(action),
+            article.id,
+            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs),
+            llm_cost_attrs
+          )
 
           :ok
 
         _ ->
+          persist_decision(
+            decision_attrs,
+            "skipped_publish_error",
+            nil,
+            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs),
+            llm_cost_attrs
+          )
+
           :ok
       end
     else
+      persist_decision(
+        decision_attrs,
+        "skipped_budget",
+        nil,
+        decision_summary(significance_score, threshold, source_ids, rumour?, zero_cost_attrs()),
+        zero_cost_attrs()
+      )
+
       :ok
     end
   end
@@ -94,13 +133,16 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     rumour? = rumour_cluster?(cluster_sources)
 
     case llm_draft_attrs(cluster_sources, rumour?) do
-      {:ok, llm_attrs} ->
-        llm_attrs
+      {:ok, llm_attrs, llm_cost_attrs} ->
+        {llm_attrs, llm_cost_attrs}
 
       :error ->
-        %{
-          title: primary.title,
-          body: summary
+        {
+          %{
+            title: primary.title,
+            body: summary
+          },
+          zero_cost_attrs()
         }
     end
   end
@@ -125,8 +167,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp parse_and_record_draft(prompt, text) do
     case parse_llm_draft(text) do
       {:ok, attrs} ->
-        record_llm_cost(prompt, text)
-        {:ok, attrs}
+        llm_cost_attrs = record_llm_cost(prompt, text)
+        {:ok, attrs, llm_cost_attrs}
 
       _ ->
         :error
@@ -206,7 +248,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         estimated_cost_gbp: estimated_cost_gbp
       })
 
-    :ok
+    %{
+      input_tokens: prompt_tokens,
+      output_tokens: output_tokens,
+      estimated_cost_gbp: estimated_cost_gbp
+    }
   end
 
   defp estimate_tokens(text) when is_binary(text) do
@@ -234,10 +280,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       String.contains?(title, "rumour") or String.contains?(title, "linked") or
         String.contains?(title, "interest")
     end)
-  end
-
-  defp significant_change_cluster?(cluster_sources) do
-    significance_score(cluster_sources) >= significance_threshold()
   end
 
   defp significance_score(cluster_sources) do
@@ -302,6 +344,34 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:significance_threshold, @default_significance_threshold)
+  end
+
+  defp prompt_version do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:prompt_version, @default_prompt_version)
+  end
+
+  defp persist_decision(base_attrs, action, article_id, summary, llm_cost_attrs) do
+    attrs =
+      base_attrs
+      |> Map.merge(llm_cost_attrs)
+      |> Map.put(:decision_action, action)
+      |> Map.put(:decision_summary, summary)
+      |> Map.put(:permanent_article_id, article_id)
+
+    _ = Intelligence.create_article_generation_decision(attrs)
+    :ok
+  end
+
+  defp decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs) do
+    llm_mode = if llm_cost_attrs.input_tokens > 0, do: "llm_draft", else: "deterministic"
+
+    "significance #{significance_score}/#{threshold}; sources #{length(source_ids)}; rumour #{rumour?}; mode #{llm_mode}"
+  end
+
+  defp zero_cost_attrs do
+    %{input_tokens: 0, output_tokens: 0, estimated_cost_gbp: Decimal.new("0")}
   end
 
   defp normalize_args(args) do

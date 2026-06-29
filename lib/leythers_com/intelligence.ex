@@ -5,6 +5,7 @@ defmodule LeythersCom.Intelligence do
 
   import Ecto.Query
 
+  alias LeythersCom.Intelligence.ArticleGenerationDecision
   alias LeythersCom.Intelligence.CostLedger
   alias LeythersCom.Repo
   alias Oban.Job
@@ -78,6 +79,39 @@ defmodule LeythersCom.Intelligence do
   end
 
   def recent_cost_ledgers(_limit), do: []
+
+  def create_article_generation_decision(attrs) when is_map(attrs) do
+    started_at = System.monotonic_time()
+
+    result =
+      %ArticleGenerationDecision{}
+      |> ArticleGenerationDecision.changeset(attrs)
+      |> Repo.insert()
+
+    :telemetry.execute(
+      [:leythers_com, :intelligence, :article_generation_decision, :create, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      %{result: normalize_budget_result(result)}
+    )
+
+    result
+  end
+
+  def create_article_generation_decision(_attrs) do
+    {:error, ArticleGenerationDecision.changeset(%ArticleGenerationDecision{}, %{})}
+  end
+
+  def recent_article_generation_decisions(limit \\ 25)
+
+  def recent_article_generation_decisions(limit) when is_integer(limit) and limit > 0 do
+    ArticleGenerationDecision
+    |> order_by([decision], desc: decision.inserted_at)
+    |> limit(^limit)
+    |> preload([:permanent_article])
+    |> Repo.all()
+  end
+
+  def recent_article_generation_decisions(_limit), do: []
 
   def list_failed_jobs(limit \\ 25)
 

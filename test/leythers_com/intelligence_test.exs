@@ -194,9 +194,7 @@ defmodule LeythersCom.IntelligenceTest do
 
       assert :ok = Intelligence.ensure_generation_allowed!(~D[2026-06-01])
 
-      assert_receive {:telemetry_event,
-                      [:leythers_com, :intelligence, :generation_budget, :check, :stop],
-                      measurements, metadata}
+      {measurements, metadata} = wait_for_budget_check_event(:under_budget, 5)
 
       assert measurements.duration > 0
       assert measurements.count == 1
@@ -217,9 +215,7 @@ defmodule LeythersCom.IntelligenceTest do
 
       assert {:error, :over_budget} = Intelligence.ensure_generation_allowed!(~D[2026-06-01])
 
-      assert_receive {:telemetry_event,
-                      [:leythers_com, :intelligence, :generation_budget, :check, :stop],
-                      measurements, metadata}
+      {measurements, metadata} = wait_for_budget_check_event(:over_budget, 5)
 
       assert measurements.duration > 0
       assert measurements.count == 1
@@ -262,6 +258,51 @@ defmodule LeythersCom.IntelligenceTest do
 
     test "returns empty list for non-positive limits" do
       assert Intelligence.recent_cost_ledgers(0) == []
+    end
+  end
+
+  describe "article generation decisions" do
+    test "creates and lists recent decisions" do
+      run_id = Ecto.UUID.generate()
+
+      assert {:ok, created} =
+               Intelligence.create_article_generation_decision(%{
+                 run_id: run_id,
+                 decision_action: "created",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_count: 1,
+                 significance_score: 80,
+                 significance_threshold: 70,
+                 prompt_version: "source_editorial_test",
+                 decision_summary: "created due to high significance",
+                 input_tokens: 0,
+                 output_tokens: 0,
+                 estimated_cost_gbp: Decimal.new("0")
+               })
+
+      assert {:ok, skipped} =
+               Intelligence.create_article_generation_decision(%{
+                 run_id: run_id,
+                 decision_action: "skipped_budget",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_count: 1,
+                 significance_score: 80,
+                 significance_threshold: 70,
+                 prompt_version: "source_editorial_test",
+                 decision_summary: "skipped due to budget",
+                 input_tokens: 0,
+                 output_tokens: 0,
+                 estimated_cost_gbp: Decimal.new("0")
+               })
+
+      decisions = Intelligence.recent_article_generation_decisions(2)
+
+      assert length(decisions) == 2
+      assert Enum.map(decisions, & &1.id) == [skipped.id, created.id]
+    end
+
+    test "returns empty list for non-positive limits" do
+      assert Intelligence.recent_article_generation_decisions(0) == []
     end
   end
 
@@ -349,5 +390,21 @@ defmodule LeythersCom.IntelligenceTest do
     |> LeythersCom.Repo.update_all(set: updates)
 
     LeythersCom.Repo.get!(Job, job.id)
+  end
+
+  defp wait_for_budget_check_event(_budget_state, 0) do
+    flunk("missing expected generation budget telemetry")
+  end
+
+  defp wait_for_budget_check_event(budget_state, attempts_left) do
+    assert_receive {:telemetry_event,
+                    [:leythers_com, :intelligence, :generation_budget, :check, :stop],
+                    measurements, metadata}
+
+    if metadata.budget_state == budget_state do
+      {measurements, metadata}
+    else
+      wait_for_budget_check_event(budget_state, attempts_left - 1)
+    end
   end
 end

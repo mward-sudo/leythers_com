@@ -123,6 +123,13 @@ defmodule LeythersComWeb.Telemetry do
         tags: [:result]
       ),
       sum("leythers_com.intelligence.cost_ledger.upsert.stop.count", tags: [:result]),
+      summary("leythers_com.intelligence.article_generation_decision.create.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.intelligence.article_generation_decision.create.stop.count",
+        tags: [:result]
+      ),
       summary("leythers_com.intelligence.generation_budget.check.stop.duration",
         unit: {:native, :millisecond},
         tags: [:result, :budget_state]
