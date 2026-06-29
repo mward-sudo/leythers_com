@@ -1,10 +1,12 @@
 defmodule LeythersCom.Intelligence do
-  @moduledoc false
+  @moduledoc """
+  Intelligence context for daily cost ledger upserts and monthly spend queries.
+  """
 
   import Ecto.Query
 
-  alias LeythersCom.Repo
   alias LeythersCom.Intelligence.CostLedger
+  alias LeythersCom.Repo
 
   def upsert_cost_ledger(%{date: date} = attrs) when not is_nil(date) do
     changeset = CostLedger.changeset(%CostLedger{}, attrs)

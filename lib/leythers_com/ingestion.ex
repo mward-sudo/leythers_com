@@ -1,10 +1,12 @@
 defmodule LeythersCom.Ingestion do
-  @moduledoc false
+  @moduledoc """
+  Ingestion context for creating and querying normalized raw sources.
+  """
 
   import Ecto.Query
 
-  alias LeythersCom.Repo
   alias LeythersCom.Ingestion.RawSource
+  alias LeythersCom.Repo
 
   def create_raw_source(attrs) do
     %RawSource{}

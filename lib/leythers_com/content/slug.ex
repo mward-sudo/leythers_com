@@ -1,10 +1,12 @@
 defmodule LeythersCom.Content.Slug do
-  @moduledoc false
+  @moduledoc """
+  Slug helper for generating URL-safe slugs and resolving collisions.
+  """
 
   import Ecto.Query
 
-  alias LeythersCom.Repo
   alias LeythersCom.Content.PermanentArticle
+  alias LeythersCom.Repo
 
   def generate(title) do
     title
