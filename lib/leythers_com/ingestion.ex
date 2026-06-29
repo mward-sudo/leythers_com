@@ -83,8 +83,40 @@ defmodule LeythersCom.Ingestion do
   def enqueue_feed_fetch(attrs) when is_map(attrs) do
     attrs
     |> Basic.normalize()
-    |> FetchRssFeedWorker.new()
+    |> FetchRssFeedWorker.new(unique: feed_enqueue_unique_opts())
     |> Oban.insert()
+  end
+
+  def feed_enqueue_unique_opts do
+    [
+      fields: [:worker, :args],
+      period: enqueue_dedupe_seconds(),
+      states: [:available, :scheduled, :executing, :retryable, :completed]
+    ]
+  end
+
+  def alert_on_stale_feeds(opts \\ []) do
+    started_at = System.monotonic_time()
+    report = feed_freshness_report(opts)
+
+    stale_providers =
+      report
+      |> Enum.filter(& &1.stale)
+      |> Enum.map(& &1.origin_provider)
+
+    metadata = %{
+      result: :ok,
+      stale_count: length(stale_providers),
+      stale_providers: stale_providers
+    }
+
+    :telemetry.execute(
+      [:leythers_com, :ingestion, :feed_stale_alert, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      metadata
+    )
+
+    %{stale_providers: stale_providers, report: report}
   end
 
   def feed_freshness_report(opts \\ []) do
@@ -142,6 +174,12 @@ defmodule LeythersCom.Ingestion do
     :leythers_com
     |> Application.get_env(:ingestion_monitoring, [])
     |> Keyword.get(:stale_after_hours, 6)
+  end
+
+  defp enqueue_dedupe_seconds do
+    :leythers_com
+    |> Application.get_env(:ingestion_monitoring, [])
+    |> Keyword.get(:enqueue_dedupe_seconds, 900)
   end
 
   defp latest_source_inserted_at_by_provider([]), do: %{}

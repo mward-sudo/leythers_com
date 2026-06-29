@@ -108,6 +108,11 @@ defmodule LeythersComWeb.Telemetry do
         tags: [:result]
       ),
       sum("leythers_com.ingestion.feed_freshness.query.stop.count", tags: [:result]),
+      summary("leythers_com.ingestion.feed_stale_alert.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.ingestion.feed_stale_alert.stop.count", tags: [:result]),
       summary("leythers_com.intelligence.cost_ledger.upsert.stop.duration",
         unit: {:native, :millisecond},
         tags: [:result]

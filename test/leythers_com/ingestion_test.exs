@@ -234,4 +234,49 @@ defmodule LeythersCom.IngestionTest do
       assert stale.last_seen_at == nil
     end
   end
+
+  describe "feed_enqueue_unique_opts/0" do
+    test "returns worker+args dedupe policy with configured period" do
+      opts = Ingestion.feed_enqueue_unique_opts()
+
+      assert opts[:fields] == [:worker, :args]
+      assert opts[:period] == 900
+      assert opts[:states] == [:available, :scheduled, :executing, :retryable, :completed]
+    end
+  end
+
+  describe "alert_on_stale_feeds/1" do
+    test "emits telemetry with stale provider count" do
+      handler_id = "ingestion-stale-alert-#{System.unique_integer([:positive])}"
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:leythers_com, :ingestion, :feed_stale_alert, :stop],
+          fn event, measurements, metadata, test_pid ->
+            send(test_pid, {:telemetry_event, event, measurements, metadata})
+          end,
+          self()
+        )
+
+      on_exit(fn -> :telemetry.detach(handler_id) end)
+
+      result =
+        Ingestion.alert_on_stale_feeds(
+          origin_providers: ["missing_provider"],
+          stale_after_hours: 1
+        )
+
+      assert result.stale_providers == ["missing_provider"]
+
+      assert_receive {:telemetry_event, [:leythers_com, :ingestion, :feed_stale_alert, :stop],
+                      measurements, metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :ok
+      assert metadata.stale_count == 1
+      assert metadata.stale_providers == ["missing_provider"]
+    end
+  end
 end

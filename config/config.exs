@@ -138,11 +138,16 @@ config :leythers_com, :ingestion_feeds, [
   }
 ]
 
+config :leythers_com, :ingestion_monitoring,
+  stale_after_hours: 6,
+  enqueue_dedupe_seconds: 900
+
 # Configure Quantum scheduler
 config :leythers_com, LeythersCom.Scheduler,
   jobs: [
     {"@daily", {LeythersCom.Ingestion.SourceLinkHealthChecker, :check_all_raw_sources, []}},
-    {"*/30 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}}
+    {"*/30 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}},
+    {"@hourly", {LeythersCom.Ingestion, :alert_on_stale_feeds, []}}
   ]
 
 # Import environment specific config. This must remain at the bottom
