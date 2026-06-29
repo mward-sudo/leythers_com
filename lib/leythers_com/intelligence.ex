@@ -398,6 +398,9 @@ defmodule LeythersCom.Intelligence do
     page = positive_integer(opts[:page], 1)
     per_page = positive_integer(opts[:per_page], 20) |> min(100)
 
+    # Fetch executing jobs
+    executing_processes = list_executing_jobs_as_processes()
+
     base_query =
       JobEffectEvent
       |> where([event], not is_nil(event.process_run_id))
@@ -409,7 +412,8 @@ defmodule LeythersCom.Intelligence do
       |> distinct([event], event.process_run_id)
       |> select([event], event.process_run_id)
 
-    total_count = Repo.aggregate(count_query, :count, :id)
+    completed_count = Repo.aggregate(count_query, :count, :id)
+    total_count = completed_count + Enum.count(executing_processes)
     total_pages = if total_count == 0, do: 1, else: div(total_count + per_page - 1, per_page)
     current_page = min(page, total_pages)
     offset = (current_page - 1) * per_page
@@ -420,16 +424,34 @@ defmodule LeythersCom.Intelligence do
       |> group_by([event], event.process_run_id)
       |> select([event], {event.process_run_id, max(event.inserted_at)})
       |> order_by([event], desc: max(event.inserted_at))
-      |> limit(^per_page)
-      |> offset(^offset)
 
-    processes =
+    completed_processes =
       process_query
       |> Repo.all()
       |> Enum.map(fn {process_run_id, _} -> process_summary(process_run_id) end)
+      |> Enum.reject(&is_nil/1)
+
+    # Sort executing jobs by timestamp, keep them first
+    sorted_executing =
+      executing_processes
+      |> Enum.sort_by(& &1.last_updated_at, :desc)
+
+    # Sort completed jobs by timestamp
+    sorted_completed =
+      completed_processes
+      |> Enum.sort_by(& &1.last_updated_at, :desc)
+
+    # Combine: executing jobs always first, then completed
+    all_processes = sorted_executing ++ sorted_completed
+
+    # Apply pagination
+    paginated_processes =
+      all_processes
+      |> Enum.drop(offset)
+      |> Enum.take(per_page)
 
     %{
-      entries: processes,
+      entries: paginated_processes,
       page: current_page,
       per_page: per_page,
       total_count: total_count,
@@ -508,11 +530,107 @@ defmodule LeythersCom.Intelligence do
   end
 
   def process_events(process_run_id) when is_binary(process_run_id) do
-    JobEffectEvent
-    |> where([event], event.process_run_id == ^process_run_id)
-    |> order_by([event], asc: event.inserted_at)
-    |> preload(:permanent_article)
+    # Executing jobs (with process_run_id like "oban-217") have no events yet
+    # But we can fetch pending sources being processed
+    if String.starts_with?(process_run_id, "oban-") do
+      []
+    else
+      JobEffectEvent
+      |> where([event], event.process_run_id == ^process_run_id)
+      |> order_by([event], asc: event.inserted_at)
+      |> preload(:permanent_article)
+      |> Repo.all()
+    end
+  end
+
+  def executing_job_details(job_id) when is_integer(job_id) do
+    from(j in "oban_jobs",
+      where: j.id == ^job_id,
+      select: %{
+        id: j.id,
+        worker: j.worker,
+        state: j.state,
+        args: j.args,
+        attempted_at: j.attempted_at
+      }
+    )
+    |> Repo.one()
+  end
+
+  def pending_editorial_sources(limit \\ 50) do
+    from(source in "raw_sources",
+      where: source.status == "pending",
+      order_by: [asc: source.ingested_at],
+      limit: ^limit,
+      select: %{
+        id: source.id,
+        title: source.title,
+        publication_date: source.publication_date,
+        ingested_at: source.ingested_at
+      }
+    )
     |> Repo.all()
+  end
+
+  def list_executing_jobs_as_processes do
+    # Fetch currently executing Oban jobs
+    from(j in "oban_jobs",
+      where: j.state in ["executing", "retryable"],
+      select: %{
+        id: j.id,
+        worker: j.worker,
+        state: j.state,
+        attempted_at: j.attempted_at,
+        args: j.args
+      },
+      order_by: [desc: j.attempted_at]
+    )
+    |> Repo.all()
+    |> Enum.map(&oban_job_to_process_summary/1)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp oban_job_to_process_summary(%{
+         worker: worker,
+         state: state,
+         attempted_at: attempted_at,
+         id: job_id
+       }) do
+    {process_type, process_name} = infer_process_info_from_worker(worker)
+
+    process_status =
+      case state do
+        "executing" -> :running
+        "retryable" -> :failed
+        _ -> :mixed
+      end
+
+    timestamp = attempted_at || DateTime.utc_now()
+
+    %{
+      process_run_id: "oban-#{job_id}",
+      process_type: process_type,
+      process_name: process_name,
+      status: process_status,
+      started_at: timestamp,
+      last_updated_at: timestamp,
+      event_count: 0,
+      stats: %{completed: 0, discarded: 0, executing: 1, failed: 0},
+      is_executing: true
+    }
+  end
+
+  defp infer_process_info_from_worker(worker) do
+    case worker do
+      "LeythersCom.Ingestion.FetchRssFeedWorker" ->
+        {:ingestion, "RSS Feed Ingestion"}
+
+      "LeythersCom.Intelligence.SourceEditorialWorker" ->
+        {:editorial, "Editorial Review"}
+
+      worker ->
+        {:job, worker}
+    end
   end
 
   def monthly_budget_state(%Date{} = date, monthly_budget_gbp) do

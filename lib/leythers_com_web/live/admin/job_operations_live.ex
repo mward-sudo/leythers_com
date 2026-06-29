@@ -26,6 +26,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
      |> assign(:query_params, %{})
      |> assign(:processes_page, empty_page())
      |> assign(:expanded_process_id, nil)
+     |> assign(:process_events, [])
+     |> assign(:pending_sources, [])
      |> assign(:selected_event_id, nil)
      |> assign(:selected_event, nil)}
   end
@@ -47,7 +49,17 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     processes_page = Intelligence.list_processes(opts)
 
     expanded_process_id = params["process_id"]
-    process_events = if expanded_process_id, do: Intelligence.process_events(expanded_process_id), else: []
+
+    process_events =
+      if expanded_process_id, do: Intelligence.process_events(expanded_process_id), else: []
+
+    # For executing editorial jobs, fetch pending sources being processed
+    pending_sources =
+      if expanded_process_id && String.starts_with?(expanded_process_id, "oban-") do
+        Intelligence.pending_editorial_sources(100)
+      else
+        []
+      end
 
     selected_event_id = params["event_id"]
 
@@ -69,6 +81,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     |> assign(:processes_page, processes_page)
     |> assign(:expanded_process_id, expanded_process_id)
     |> assign(:process_events, process_events)
+    |> assign(:pending_sources, pending_sources)
     |> assign(:selected_event_id, selected_event_id)
     |> assign(:selected_event, selected_event)
   end
@@ -86,7 +99,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   @impl true
   def handle_event("show_event", %{"event_id" => event_id}, socket) do
     process_id = socket.assigns.expanded_process_id
-    {:noreply, push_patch(socket, to: ~p"/admin/jobs?process_id=#{process_id}&event_id=#{event_id}")}
+
+    {:noreply,
+     push_patch(socket, to: ~p"/admin/jobs?process_id=#{process_id}&event_id=#{event_id}")}
   end
 
   @impl true
@@ -169,6 +184,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
                 process={process}
                 expanded={@expanded_process_id == process.process_run_id}
                 events={@process_events}
+                pending_sources={@pending_sources}
                 selected_event_id={@selected_event_id}
               />
             <% end %>
@@ -260,6 +276,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   attr :process, :map, required: true
   attr :expanded, :boolean, default: false
   attr :events, :list, default: []
+  attr :pending_sources, :list, default: []
   attr :selected_event_id, :string, default: nil
 
   defp process_card(assigns) do
@@ -304,58 +321,87 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
             </p>
           </div>
           <div class="flex items-center gap-1 text-base-content/40">
-            <.icon name="hero-chevron-down" class={["h-5 w-5 transition-transform", @expanded && "rotate-180"]} />
+            <.icon
+              name="hero-chevron-down"
+              class={["h-5 w-5 transition-transform", @expanded && "rotate-180"]}
+            />
           </div>
         </div>
       </button>
 
-      <%= if @expanded && @events != [] do %>
+      <%= if @expanded do %>
         <div class="border-t border-base-300 px-5 py-4 bg-base-200/20">
-          <div class="mb-3 space-y-2">
-            <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/60">
-              Events ({Enum.count(@events)})
-            </h4>
-            <div class="space-y-1.5">
-              <%= for event <- @events do %>
-                <button
-                  type="button"
-                  class={[
-                    "w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
-                    @selected_event_id == to_string(event.id) &&
-                      "bg-primary/10 border border-primary text-primary-focus",
-                    @selected_event_id != to_string(event.id) &&
-                      "border border-base-300 hover:bg-base-100"
-                  ]}
-                  phx-click="show_event"
-                  phx-value-event_id={event.id}
-                  id={"event-btn-#{event.id}"}
-                >
-                  <div class="flex items-start justify-between gap-2">
-                    <div>
-                      <p class="font-medium">
-                        {if(ingestion_event?(event), do: "Feed Ingestion", else: "Editorial Review")}
-                      </p>
-                      <p class="text-xs text-base-content/60 mt-0.5">
-                        {format_datetime(event.inserted_at)}
-                      </p>
-                    </div>
-                    <span class={[
-                      "flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
-                      case event.state do
-                        "completed" -> "bg-green-100 text-green-700"
-                        "executing" -> "bg-blue-100 text-blue-700"
-                        "retryable" -> "bg-orange-100 text-orange-700"
-                        "discarded" -> "bg-red-100 text-red-700"
-                        _ -> "bg-base-200 text-base-content/60"
-                      end
-                    ]}>
-                      {event.state}
-                    </span>
+          <%= if Map.get(@process, :is_executing) && Enum.count(@pending_sources) > 0 do %>
+            <%!-- Show pending sources for executing jobs --%>
+            <div class="mb-4 space-y-2">
+              <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/60">
+                Processing ({Enum.count(@pending_sources)} pending source(s))
+              </h4>
+              <div class="space-y-2">
+                <%= for source <- @pending_sources |> Enum.take(10) do %>
+                  <div class="rounded-lg border border-base-300 bg-base-100 px-3 py-2.5 text-sm">
+                    <p class="font-medium text-base-content">{source.title}</p>
+                    <p class="mt-0.5 text-xs text-base-content/60">
+                      Ingested {format_datetime(source.ingested_at)}
+                    </p>
                   </div>
-                </button>
-              <% end %>
+                <% end %>
+                <%= if Enum.count(@pending_sources) > 10 do %>
+                  <p class="text-xs text-base-content/50 italic">
+                    +{Enum.count(@pending_sources) - 10} more pending source(s)
+                  </p>
+                <% end %>
+              </div>
             </div>
-          </div>
+          <% end %>
+
+          <%= if Enum.count(@events) > 0 do %>
+            <div class="mb-3 space-y-2">
+              <h4 class="text-xs font-semibold uppercase tracking-wider text-base-content/60">
+                Events ({Enum.count(@events)})
+              </h4>
+              <div class="space-y-1.5">
+                <%= for event <- @events do %>
+                  <button
+                    type="button"
+                    class={[
+                      "w-full rounded-lg px-3 py-2.5 text-left text-sm transition-colors",
+                      @selected_event_id == to_string(event.id) &&
+                        "bg-primary/10 border border-primary text-primary-focus",
+                      @selected_event_id != to_string(event.id) &&
+                        "border border-base-300 hover:bg-base-100"
+                    ]}
+                    phx-click="show_event"
+                    phx-value-event_id={event.id}
+                    id={"event-btn-#{event.id}"}
+                  >
+                    <div class="flex items-start justify-between gap-2">
+                      <div>
+                        <p class="font-medium">
+                          {if(ingestion_event?(event), do: "Feed Ingestion", else: "Editorial Review")}
+                        </p>
+                        <p class="text-xs text-base-content/60 mt-0.5">
+                          {format_datetime(event.inserted_at)}
+                        </p>
+                      </div>
+                      <span class={[
+                        "flex-shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold leading-none",
+                        case event.state do
+                          "completed" -> "bg-green-100 text-green-700"
+                          "executing" -> "bg-blue-100 text-blue-700"
+                          "retryable" -> "bg-orange-100 text-orange-700"
+                          "discarded" -> "bg-red-100 text-red-700"
+                          _ -> "bg-base-200 text-base-content/60"
+                        end
+                      ]}>
+                        {event.state}
+                      </span>
+                    </div>
+                  </button>
+                <% end %>
+              </div>
+            </div>
+          <% end %>
         </div>
       <% end %>
     </div>
@@ -384,20 +430,24 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     <div class="space-y-5" id={"ingestion-event-#{@event.id}"}>
       <div>
         <h3 class="text-lg font-semibold flex items-center gap-2">
-          <.icon name="hero-arrow-down-tray" class="h-5 w-5" />
-          Feed Ingestion
+          <.icon name="hero-arrow-down-tray" class="h-5 w-5" /> Feed Ingestion
         </h3>
         <p class="mt-2 break-all text-sm text-base-content/70">
-          <span class="font-medium">{Map.get(@feed, "origin_provider", "(unknown)")}</span> · {Map.get(@feed, "url", "(no URL)")}
+          <span class="font-medium">{Map.get(@feed, "origin_provider", "(unknown)")}</span>
+          · {Map.get(@feed, "url", "(no URL)")}
         </p>
       </div>
 
       <div class="grid grid-cols-3 gap-2">
         <div class="rounded-lg bg-success/10 px-3 py-2">
-          <p class="text-xs font-medium text-success">{Map.get(@details, "inserted", length(@new_items))} new</p>
+          <p class="text-xs font-medium text-success">
+            {Map.get(@details, "inserted", length(@new_items))} new
+          </p>
         </div>
         <div class="rounded-lg bg-base-200 px-3 py-2">
-          <p class="text-xs font-medium text-base-content/60">{Map.get(@details, "seen", length(@seen_items))} seen</p>
+          <p class="text-xs font-medium text-base-content/60">
+            {Map.get(@details, "seen", length(@seen_items))} seen
+          </p>
         </div>
         <%= if Map.get(@details, "errors", 0) > 0 do %>
           <div class="rounded-lg bg-error/10 px-3 py-2">
@@ -432,8 +482,12 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
                     {Map.get(item, "status", "?")}
                   </span>
                   <div class="flex-1 min-w-0">
-                    <p class="text-sm font-medium break-words">{Map.get(item, "title", "(no title)")}</p>
-                    <p class="text-xs text-base-content/60 break-all mt-1">{Map.get(item, "url", "")}</p>
+                    <p class="text-sm font-medium break-words">
+                      {Map.get(item, "title", "(no title)")}
+                    </p>
+                    <p class="text-xs text-base-content/60 break-all mt-1">
+                      {Map.get(item, "url", "")}
+                    </p>
                   </div>
                 </div>
               </div>
@@ -454,8 +508,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     <div class="space-y-5" id={"editorial-event-#{@event.id}"}>
       <div>
         <h3 class="text-lg font-semibold flex items-center gap-2">
-          <.icon name="hero-pencil-square" class="h-5 w-5" />
-          Editorial Review
+          <.icon name="hero-pencil-square" class="h-5 w-5" /> Editorial Review
         </h3>
         <div class="mt-3 grid gap-2 sm:grid-cols-2">
           <div>
@@ -482,7 +535,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
       <%= if @event.change_summary do %>
         <div>
-          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">Summary</p>
+          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">
+            Summary
+          </p>
           <p class="text-sm text-base-content">{@event.change_summary}</p>
         </div>
       <% end %>
@@ -498,9 +553,13 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
         <div class="grid gap-2 sm:grid-cols-2">
           <%= for input <- source_inputs(@event.source_input_snapshot) do %>
             <div class="rounded-lg border border-base-300 bg-base-200/30 p-3">
-              <p class="font-medium text-sm">{Map.get(input, "headline", Map.get(input, "title", "(no headline)"))}</p>
+              <p class="font-medium text-sm">
+                {Map.get(input, "headline", Map.get(input, "title", "(no headline)"))}
+              </p>
               <p class="text-xs text-base-content/60 mt-1 break-all">{Map.get(input, "url", "")}</p>
-              <p class="text-xs text-base-content/50 mt-2">{Map.get(input, "excerpt", Map.get(input, "summary", ""))}</p>
+              <p class="text-xs text-base-content/50 mt-2">
+                {Map.get(input, "excerpt", Map.get(input, "summary", ""))}
+              </p>
             </div>
           <% end %>
         </div>
@@ -508,20 +567,26 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
       <%= if @event.llm_prompt do %>
         <div>
-          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">LLM Prompt</p>
+          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">
+            LLM Prompt
+          </p>
           <pre class="rounded-lg bg-base-200 p-3 text-xs overflow-x-auto max-h-48 overflow-y-auto border border-base-300"><code>{@event.llm_prompt}</code></pre>
         </div>
       <% end %>
 
       <%= if @event.llm_output do %>
         <div>
-          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">LLM Output</p>
+          <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">
+            LLM Output
+          </p>
           <pre class="rounded-lg bg-base-200 p-3 text-xs overflow-x-auto max-h-48 overflow-y-auto border border-base-300"><code>{inspect(@event.llm_output, pretty: true, limit: :infinity)}</code></pre>
         </div>
       <% end %>
 
       <div>
-        <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">Change Details</p>
+        <p class="text-xs font-medium uppercase tracking-wider text-base-content/50 mb-2">
+          Change Details
+        </p>
         <pre class="rounded-lg bg-base-200 p-3 text-xs overflow-x-auto max-h-48 overflow-y-auto border border-base-300"><code>{inspect(@event.change_details, pretty: true, limit: :infinity)}</code></pre>
       </div>
     </div>
