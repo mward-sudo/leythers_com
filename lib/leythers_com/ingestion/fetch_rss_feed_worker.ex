@@ -12,10 +12,11 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
   @impl Oban.Worker
   def perform(%Oban.Job{} = job) do
     attrs = job.args
+    process_run_id = Ecto.UUID.generate()
 
     case Ingestion.ingest_rss_feed(attrs, Req) do
       {:ok, stats} ->
-        persist_job_effect_event(job, attrs, stats, nil)
+        persist_job_effect_event(job, attrs, stats, nil, process_run_id)
         :ok
 
       {:error, reason} ->
@@ -23,7 +24,8 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
           job,
           attrs,
           %{processed: 0, inserted: 0, errors: 1},
-          inspect(reason)
+          inspect(reason),
+          process_run_id
         )
 
         {:error, inspect(reason)}
@@ -81,7 +83,7 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
   defp normalize_multiplier(value) when is_float(value) and value > 0.0, do: value
   defp normalize_multiplier(_), do: 1.0
 
-  defp persist_job_effect_event(job, attrs, stats, error_summary) do
+  defp persist_job_effect_event(job, attrs, stats, error_summary, process_run_id) do
     oban_job_id = if is_integer(job.id), do: job.id, else: 0
 
     worker =
@@ -119,6 +121,7 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
         state: if(error_summary, do: "retryable", else: "completed"),
         attempt: attempt,
         decision_action: decision_action,
+        process_run_id: process_run_id,
         source_ids: source_ids,
         source_input_snapshot: source_input_snapshot,
         change_summary:

@@ -675,6 +675,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         else: __MODULE__ |> Module.split() |> Enum.join(".")
 
     attempt = if is_integer(job.attempt), do: max(job.attempt, 1), else: 1
+    process_run_id = Map.get(change_details, "run_id")
 
     _ =
       Intelligence.create_job_effect_event(%{
@@ -685,6 +686,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         attempt: attempt,
         decision_action: decision_action,
         permanent_article_id: permanent_article_id,
+        process_run_id: process_run_id,
         source_ids: source_ids,
         source_input_snapshot: json_safe(source_input_snapshot),
         change_summary: change_summary,
