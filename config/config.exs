@@ -79,6 +79,12 @@ config :logger, :default_formatter,
 # Configure intelligence budget guardrails
 config :leythers_com, :intelligence_budget, monthly_cap_gbp: "10.00"
 
+# Configure deterministic editorial voice profile
+config :leythers_com, :voice_profile,
+  rumour_title_prefix: "Rumour:",
+  rumour_notice: "Rumour mill warning: treat this as chatter until confirmed.",
+  fan_signoff: "Terrace verdict: proper Leythers chaos, and we love it."
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
