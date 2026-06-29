@@ -113,42 +113,29 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   @impl true
   def handle_event("regenerate-all", _params, socket) do
-    case Ingestion.enqueue_article_regeneration(:all) do
-      {:ok, %{requeued_sources: requeued_sources}} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :info,
-           "Queued full regeneration and re-queued #{requeued_sources} processed source(s)."
-         )
-         |> refresh_page()}
+    {:ok, %{requeued_sources: requeued_sources}} = Ingestion.enqueue_article_regeneration(:all)
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Unable to queue full regeneration: #{inspect(reason)}")
-         |> refresh_page()}
-    end
+    {:noreply,
+     socket
+     |> put_flash(
+       :info,
+       "Queued full regeneration and re-queued #{requeued_sources} processed source(s)."
+     )
+     |> refresh_page()}
   end
 
   @impl true
   def handle_event("regenerate-recent", _params, socket) do
-    case Ingestion.enqueue_article_regeneration(:recent) do
-      {:ok, %{requeued_sources: requeued_sources}} ->
-        {:noreply,
-         socket
-         |> put_flash(
-           :info,
-           "Queued recent regeneration (last 2 weeks) and re-queued #{requeued_sources} processed source(s)."
-         )
-         |> refresh_page()}
+    {:ok, %{requeued_sources: requeued_sources}} =
+      Ingestion.enqueue_article_regeneration(:recent)
 
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> put_flash(:error, "Unable to queue recent regeneration: #{inspect(reason)}")
-         |> refresh_page()}
-    end
+    {:noreply,
+     socket
+     |> put_flash(
+       :info,
+       "Queued recent regeneration (last 2 weeks) and re-queued #{requeued_sources} processed source(s)."
+     )
+     |> refresh_page()}
   end
 
   @impl true
@@ -372,7 +359,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
           <%= if is_nil(@selected_job_detail) do %>
             <p class="mt-3 text-sm text-base-content/70">
-              Select a job row to inspect source inputs, decisions, and resulting change details.
+              Select a job row to inspect what happened during that run.
             </p>
           <% else %>
             <p class="mt-3 text-sm text-base-content/70" id="selected-job-meta">
@@ -384,71 +371,13 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
                 No persisted diagnostics events found for this job.
               </p>
             <% else %>
-              <div class="mt-4 space-y-4">
+              <div class="mt-4 space-y-6">
                 <%= for event <- @selected_job_detail.events do %>
-                  <article class="rounded-xl border border-base-300 p-4" id={"job-event-#{event.id}"}>
-                    <div class="flex flex-wrap items-center justify-between gap-3">
-                      <h3 class="text-sm font-semibold uppercase tracking-[0.14em] text-base-content/70">
-                        {event.decision_action}
-                      </h3>
-                      <p class="text-xs text-base-content/60">{format_datetime(event.inserted_at)}</p>
-                    </div>
-
-                    <p class="mt-2 text-sm">{event.change_summary || "No change summary"}</p>
-
-                    <%= if event.error_summary do %>
-                      <p class="mt-2 text-sm text-error">Error: {event.error_summary}</p>
-                    <% end %>
-
-                    <div class="mt-4 grid gap-4 lg:grid-cols-3">
-                      <div>
-                        <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60">
-                          Source Inputs
-                        </h4>
-                        <ul class="mt-2 space-y-2 text-xs" id={"source-inputs-#{event.id}"}>
-                          <%= for input <- source_inputs(event.source_input_snapshot) do %>
-                            <li class="rounded-md bg-base-200/70 p-2">
-                              <p class="font-medium break-all">
-                                {Map.get(input, "headline", Map.get(input, "title", "(no headline)"))}
-                              </p>
-                              <p class="break-all text-base-content/70">
-                                {Map.get(input, "url", "(no url)")}
-                              </p>
-                              <p class="text-base-content/60">
-                                {Map.get(input, "excerpt", Map.get(input, "summary", ""))}
-                              </p>
-                            </li>
-                          <% end %>
-                        </ul>
-                      </div>
-
-                      <div>
-                        <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60">
-                          Decision Details
-                        </h4>
-                        <ul class="mt-2 space-y-2 text-xs" id={"decision-details-#{event.id}"}>
-                          <li class="rounded-md bg-base-200/70 p-2">
-                            Action: {event.decision_action}
-                          </li>
-                          <li class="rounded-md bg-base-200/70 p-2">State: {event.state}</li>
-                          <li class="rounded-md bg-base-200/70 p-2">Attempt: {event.attempt}</li>
-                          <li class="rounded-md bg-base-200/70 p-2">
-                            Article: {event.permanent_article_id || "none"}
-                          </li>
-                        </ul>
-                      </div>
-
-                      <div>
-                        <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60">
-                          Change Details
-                        </h4>
-                        <pre
-                          class="mt-2 max-h-56 overflow-auto rounded-md bg-base-200/70 p-2 text-[11px] leading-5"
-                          id={"change-details-#{event.id}"}
-                        >{inspect(event.change_details, pretty: true, limit: :infinity)}</pre>
-                      </div>
-                    </div>
-                  </article>
+                  <%= if ingestion_event?(event) do %>
+                    <.ingestion_event_detail event={event} />
+                  <% else %>
+                    <.editorial_event_detail event={event} />
+                  <% end %>
                 <% end %>
               </div>
             <% end %>
@@ -547,6 +476,172 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   defp source_inputs(%{"feed" => feed}) when is_map(feed), do: [feed]
 
   defp source_inputs(_snapshot), do: []
+
+  defp ingestion_event?(%{worker: worker}) when is_binary(worker) do
+    String.contains?(worker, "Ingestion")
+  end
+
+  defp ingestion_event?(_event), do: false
+
+  attr :event, :map, required: true
+
+  defp ingestion_event_detail(assigns) do
+    feed = get_in(assigns.event.source_input_snapshot, ["feed"]) || %{}
+    items = get_in(assigns.event.source_input_snapshot, ["items"]) || []
+    details = assigns.event.change_details || %{}
+
+    assigns =
+      assigns
+      |> assign(:feed, feed)
+      |> assign(:items, items)
+      |> assign(:details, details)
+      |> assign(:new_items, Enum.filter(items, &(Map.get(&1, "status") == "new")))
+      |> assign(:seen_items, Enum.filter(items, &(Map.get(&1, "status") == "seen")))
+      |> assign(:error_items, Enum.filter(items, &(Map.get(&1, "status") == "error")))
+
+    ~H"""
+    <article
+      class="rounded-xl border border-base-300 p-4"
+      id={"job-event-#{@event.id}"}
+    >
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h3 class="text-sm font-semibold">
+            Feed Ingestion
+          </h3>
+          <p class="text-xs text-base-content/60">
+            {Map.get(@feed, "origin_provider", "(unknown provider)")} · {Map.get(@feed, "url", "")}
+          </p>
+        </div>
+        <p class="text-xs text-base-content/60">{format_datetime(@event.inserted_at)}</p>
+      </div>
+
+      <div class="mt-4 flex flex-wrap gap-3">
+        <span class="rounded-full bg-success/15 px-3 py-1 text-xs font-medium text-success">
+          {Map.get(@details, "inserted", length(@new_items))} new
+        </span>
+        <span class="rounded-full bg-base-300/70 px-3 py-1 text-xs font-medium text-base-content/60">
+          {Map.get(@details, "seen", length(@seen_items))} already known
+        </span>
+        <%= if Map.get(@details, "errors", 0) > 0 do %>
+          <span class="rounded-full bg-error/15 px-3 py-1 text-xs font-medium text-error">
+            {Map.get(@details, "errors", 0)} error(s)
+          </span>
+        <% end %>
+        <%= if @event.error_summary do %>
+          <span class="text-xs text-error">{@event.error_summary}</span>
+        <% end %>
+      </div>
+
+      <%= if @items != [] do %>
+        <div class="mt-4 space-y-1" id={"feed-items-#{@event.id}"}>
+          <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60">
+            Items ({length(@items)})
+          </h4>
+          <ul class="mt-2 divide-y divide-base-300/50 rounded-xl border border-base-300 bg-base-200/40">
+            <%= for item <- @items do %>
+              <li class="flex items-start gap-3 px-3 py-2">
+                <span class={[
+                  "mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold leading-none",
+                  Map.get(item, "status") == "new" &&
+                    "bg-success/20 text-success",
+                  Map.get(item, "status") == "seen" &&
+                    "bg-base-300/60 text-base-content/50",
+                  Map.get(item, "status") == "error" &&
+                    "bg-error/20 text-error",
+                  Map.get(item, "status") not in ["new", "seen", "error"] &&
+                    "bg-base-300/60 text-base-content/50"
+                ]}>
+                  {Map.get(item, "status", "?")}
+                </span>
+                <div class="min-w-0">
+                  <p class="text-xs font-medium leading-snug">
+                    {Map.get(item, "title", "(no title)")}
+                  </p>
+                  <p class="break-all text-[11px] text-base-content/50 leading-snug">
+                    {Map.get(item, "url", "")}
+                  </p>
+                </div>
+              </li>
+            <% end %>
+          </ul>
+        </div>
+      <% else %>
+        <p class="mt-3 text-xs text-base-content/50 italic">
+          No item detail recorded (jobs run before this update will show blank here).
+        </p>
+      <% end %>
+    </article>
+    """
+  end
+
+  attr :event, :map, required: true
+
+  defp editorial_event_detail(assigns) do
+    ~H"""
+    <article class="rounded-xl border border-base-300 p-4" id={"job-event-#{@event.id}"}>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <h3 class="text-sm font-semibold uppercase tracking-[0.14em] text-base-content/70">
+          {@event.decision_action}
+        </h3>
+        <p class="text-xs text-base-content/60">{format_datetime(@event.inserted_at)}</p>
+      </div>
+
+      <p class="mt-2 text-sm">{@event.change_summary || "No change summary"}</p>
+
+      <%= if @event.error_summary do %>
+        <p class="mt-2 text-sm text-error">Error: {@event.error_summary}</p>
+      <% end %>
+
+      <div class="mt-4 grid gap-4 lg:grid-cols-3">
+        <div>
+          <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60">
+            Source Inputs
+          </h4>
+          <ul class="mt-2 space-y-2 text-xs" id={"source-inputs-#{@event.id}"}>
+            <%= for input <- source_inputs(@event.source_input_snapshot) do %>
+              <li class="rounded-md bg-base-200/70 p-2">
+                <p class="font-medium break-all">
+                  {Map.get(input, "headline", Map.get(input, "title", "(no headline)"))}
+                </p>
+                <p class="break-all text-base-content/70">
+                  {Map.get(input, "url", "(no url)")}
+                </p>
+                <p class="text-base-content/60">
+                  {Map.get(input, "excerpt", Map.get(input, "summary", ""))}
+                </p>
+              </li>
+            <% end %>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60">
+            Decision Details
+          </h4>
+          <ul class="mt-2 space-y-2 text-xs" id={"decision-details-#{@event.id}"}>
+            <li class="rounded-md bg-base-200/70 p-2">Action: {@event.decision_action}</li>
+            <li class="rounded-md bg-base-200/70 p-2">State: {@event.state}</li>
+            <li class="rounded-md bg-base-200/70 p-2">Attempt: {@event.attempt}</li>
+            <li class="rounded-md bg-base-200/70 p-2">
+              Article: {@event.permanent_article_id || "none"}
+            </li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-base-content/60">
+            Change Details
+          </h4>
+          <pre
+            class="mt-2 max-h-56 overflow-auto rounded-md bg-base-200/70 p-2 text-[11px] leading-5"
+            id={"change-details-#{@event.id}"}
+          >{inspect(@event.change_details, pretty: true, limit: :infinity)}</pre>
+        </div>
+      </div>
+    </article>
+    """
+  end
 
   defp format_datetime(%DateTime{} = datetime), do: Calendar.strftime(datetime, "%Y-%m-%d %H:%M")
   defp format_datetime(_datetime), do: "-"

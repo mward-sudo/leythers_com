@@ -65,6 +65,9 @@ config :leythers_com, :intelligence_generation,
   grouping_llm_timeout_ms: 10,
   llm_cost_per_1k_tokens_gbp: "0.000000"
 
+config :leythers_com,
+  regeneration_enqueue_worker: false
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 

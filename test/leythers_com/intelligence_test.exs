@@ -377,19 +377,33 @@ defmodule LeythersCom.IntelligenceTest do
       _ = create_oban_job("available", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
       _ = create_oban_job("retryable", "LeythersCom.Ingestion.FetchRssFeedWorker", "ingestion")
 
-      _ =
-        create_oban_job(
-          "completed",
-          "LeythersCom.Intelligence.SourceEditorialWorker",
-          "intelligence"
-        )
+      assert {:ok, _event_1} =
+               Intelligence.create_job_effect_event(%{
+                 oban_job_id: 501,
+                 worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+                 queue: "intelligence",
+                 state: "completed",
+                 attempt: 1,
+                 decision_action: "created",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_input_snapshot: %{"sources" => [%{"url" => "https://example.com/a"}]},
+                 change_summary: "created article",
+                 change_details: %{outcome: "created"}
+               })
 
-      _ =
-        create_oban_job(
-          "cancelled",
-          "LeythersCom.Intelligence.SourceEditorialWorker",
-          "intelligence"
-        )
+      assert {:ok, _event_2} =
+               Intelligence.create_job_effect_event(%{
+                 oban_job_id: 502,
+                 worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+                 queue: "intelligence",
+                 state: "cancelled",
+                 attempt: 1,
+                 decision_action: "skipped_budget",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_input_snapshot: %{"sources" => [%{"url" => "https://example.com/b"}]},
+                 change_summary: "budget blocked",
+                 change_details: %{outcome: "skipped"}
+               })
 
       counts = Intelligence.job_operations_bucket_counts()
 
@@ -399,13 +413,22 @@ defmodule LeythersCom.IntelligenceTest do
     end
 
     test "filters and paginates jobs by bucket" do
-      for _ <- 1..3 do
-        _ =
-          create_oban_job(
-            "completed",
-            "LeythersCom.Intelligence.SourceEditorialWorker",
-            "intelligence"
-          )
+      for idx <- 1..3 do
+        assert {:ok, _event} =
+                 Intelligence.create_job_effect_event(%{
+                   oban_job_id: 700 + idx,
+                   worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+                   queue: "intelligence",
+                   state: "completed",
+                   attempt: 1,
+                   decision_action: "created",
+                   source_ids: [Ecto.UUID.generate()],
+                   source_input_snapshot: %{
+                     "sources" => [%{"url" => "https://example.com/#{idx}"}]
+                   },
+                   change_summary: "created article #{idx}",
+                   change_details: %{outcome: "created", index: idx}
+                 })
       end
 
       queued =
@@ -466,6 +489,38 @@ defmodule LeythersCom.IntelligenceTest do
       assert length(detail.events) == 1
       assert hd(detail.events).decision_action == "created"
       assert Intelligence.job_operations_detail(0) == nil
+    end
+
+    test "returns synthetic detail when oban job row is gone but diagnostics remain" do
+      job =
+        create_oban_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      assert {:ok, _event} =
+               Intelligence.create_job_effect_event(%{
+                 oban_job_id: job.id,
+                 worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+                 queue: "intelligence",
+                 state: "completed",
+                 attempt: 1,
+                 decision_action: "created",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_input_snapshot: %{"sources" => [%{"url" => "https://example.com/a"}]},
+                 change_summary: "created article",
+                 change_details: %{outcome: "created"}
+               })
+
+      assert {:ok, _deleted_job} = Repo.delete(job)
+
+      detail = Intelligence.job_operations_detail(job.id)
+
+      assert detail.job.id == job.id
+      assert detail.job.source == :history
+      assert length(detail.events) == 1
+      assert hd(detail.events).decision_action == "created"
     end
   end
 

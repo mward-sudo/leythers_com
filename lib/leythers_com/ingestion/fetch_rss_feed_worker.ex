@@ -92,7 +92,8 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
     queue = if is_binary(job.queue), do: job.queue, else: "ingestion"
     attempt = if is_integer(job.attempt), do: max(job.attempt, 1), else: 1
 
-    source_ids = []
+    source_ids = Map.get(stats, :new_source_ids, [])
+    items = Map.get(stats, :items, [])
 
     source_input_snapshot = %{
       "feed" => %{
@@ -100,10 +101,15 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
         "origin_provider" => Map.get(attrs, "origin_provider"),
         "include_keywords" => Map.get(attrs, "include_keywords", [])
       },
-      "items" => source_ids
+      "items" => items
     }
 
     decision_action = if error_summary, do: "skipped_publish_error", else: "no_op"
+
+    processed = Map.get(stats, :processed, 0)
+    inserted = Map.get(stats, :inserted, 0)
+    errors = Map.get(stats, :errors, 0)
+    seen = max(processed - inserted - errors, 0)
 
     _ =
       Intelligence.create_job_effect_event(%{
@@ -116,11 +122,12 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
         source_ids: source_ids,
         source_input_snapshot: source_input_snapshot,
         change_summary:
-          "processed #{Map.get(stats, :processed, 0)}; inserted #{Map.get(stats, :inserted, 0)}; errors #{Map.get(stats, :errors, 0)}",
+          "#{processed} checked; #{inserted} new; #{seen} already known; #{errors} error(s)",
         change_details: %{
-          processed: Map.get(stats, :processed, 0),
-          inserted: Map.get(stats, :inserted, 0),
-          errors: Map.get(stats, :errors, 0)
+          processed: processed,
+          inserted: inserted,
+          seen: seen,
+          errors: errors
         },
         error_summary: error_summary
       })

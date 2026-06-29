@@ -212,20 +212,47 @@ defmodule LeythersCom.Intelligence do
   def job_operations_bucket_counts(filters \\ %{}) when is_map(filters) do
     base_query = job_operations_base_query(filters)
 
-    Enum.into(@job_bucket_states, %{}, fn {bucket, states} ->
-      count =
-        base_query
-        |> where([job], job.state in ^states)
-        |> Repo.aggregate(:count, :id)
+    active_count =
+      base_query
+      |> where([job], job.state in ^Map.fetch!(@job_bucket_states, :active))
+      |> Repo.aggregate(:count, :id)
 
-      {bucket, count}
-    end)
+    queued_count =
+      base_query
+      |> where([job], job.state in ^Map.fetch!(@job_bucket_states, :queued))
+      |> Repo.aggregate(:count, :id)
+
+    oban_terminal_count =
+      base_query
+      |> where([job], job.state in ^Map.fetch!(@job_bucket_states, :terminal))
+      |> Repo.aggregate(:count, :id)
+
+    history_terminal_count = terminal_history_count(filters)
+
+    %{
+      active: active_count,
+      queued: queued_count,
+      terminal:
+        if(history_terminal_count > 0, do: history_terminal_count, else: oban_terminal_count)
+    }
   end
 
   def list_job_operations_jobs(bucket, opts \\ %{}) when is_map(opts) do
-    states = bucket_states(bucket)
+    bucket = normalize_bucket(bucket)
     page = positive_integer(opts[:page], 1)
     per_page = positive_integer(opts[:per_page], 20) |> min(100)
+
+    case bucket do
+      :terminal ->
+        list_terminal_job_operations_jobs(opts, page, per_page)
+
+      _ ->
+        list_live_job_operations_jobs(bucket, opts, page, per_page)
+    end
+  end
+
+  defp list_live_job_operations_jobs(bucket, opts, page, per_page) do
+    states = Map.fetch!(@job_bucket_states, bucket)
 
     query =
       opts
@@ -253,8 +280,40 @@ defmodule LeythersCom.Intelligence do
     }
   end
 
+  defp list_terminal_job_operations_jobs(opts, page, per_page) do
+    history_count = terminal_history_count(opts)
+
+    if history_count > 0 do
+      offset = (page - 1) * per_page
+
+      terminal_history_entries =
+        opts
+        |> terminal_history_query()
+        |> order_by([event], desc: event.inserted_at)
+        |> limit(^per_page)
+        |> offset(^offset)
+        |> Repo.all()
+        |> Enum.map(&terminal_event_to_job_row/1)
+
+      total_pages =
+        if history_count == 0, do: 1, else: div(history_count + per_page - 1, per_page)
+
+      current_page = min(page, total_pages)
+
+      %{
+        entries: terminal_history_entries,
+        page: current_page,
+        per_page: per_page,
+        total_count: history_count,
+        total_pages: total_pages
+      }
+    else
+      list_live_job_operations_jobs(:terminal, opts, page, per_page)
+    end
+  end
+
   def job_operations_filter_options do
-    queues =
+    job_queues =
       Job
       |> job_operations_scope()
       |> distinct([job], job.queue)
@@ -262,7 +321,15 @@ defmodule LeythersCom.Intelligence do
       |> order_by([job], asc: job.queue)
       |> Repo.all()
 
-    workers =
+    history_queues =
+      JobEffectEvent
+      |> job_effect_events_scope()
+      |> distinct([event], event.queue)
+      |> select([event], event.queue)
+      |> order_by([event], asc: event.queue)
+      |> Repo.all()
+
+    job_workers =
       Job
       |> job_operations_scope()
       |> distinct([job], job.worker)
@@ -270,15 +337,28 @@ defmodule LeythersCom.Intelligence do
       |> order_by([job], asc: job.worker)
       |> Repo.all()
 
+    history_workers =
+      JobEffectEvent
+      |> job_effect_events_scope()
+      |> distinct([event], event.worker)
+      |> select([event], event.worker)
+      |> order_by([event], asc: event.worker)
+      |> Repo.all()
+
+    queues = (job_queues ++ history_queues) |> Enum.uniq() |> Enum.sort()
+    workers = (job_workers ++ history_workers) |> Enum.uniq() |> Enum.sort()
+
     %{queues: queues, workers: workers, states: @job_filter_states}
   end
 
   def job_operations_detail(job_id) when is_integer(job_id) and job_id > 0 do
-    with %Job{} = job <- Repo.get(Job, job_id) do
-      %{
-        job: job,
-        events: job_effect_events_for_job(job_id)
-      }
+    events = job_effect_events_for_job(job_id)
+    job = Repo.get(Job, job_id) || synthesize_job_from_events(events, job_id)
+
+    if is_nil(job) and events == [] do
+      nil
+    else
+      %{job: job, events: events}
     end
   end
 
@@ -397,6 +477,16 @@ defmodule LeythersCom.Intelligence do
 
   defp bucket_states(_bucket), do: Map.fetch!(@job_bucket_states, :active)
 
+  defp normalize_bucket(bucket) do
+    states = bucket_states(bucket)
+
+    cond do
+      states == Map.fetch!(@job_bucket_states, :active) -> :active
+      states == Map.fetch!(@job_bucket_states, :queued) -> :queued
+      true -> :terminal
+    end
+  end
+
   defp positive_integer(value, _default) when is_integer(value) and value > 0, do: value
 
   defp positive_integer(value, default) when is_binary(value) do
@@ -433,6 +523,15 @@ defmodule LeythersCom.Intelligence do
     )
   end
 
+  defp job_effect_events_scope(query) do
+    where(
+      query,
+      [event],
+      like(event.worker, "LeythersCom.Ingestion.%") or
+        like(event.worker, "LeythersCom.Intelligence.%")
+    )
+  end
+
   defp maybe_filter_queue(query, queue) when is_binary(queue) and queue != "" do
     where(query, [job], job.queue == ^queue)
   end
@@ -450,6 +549,106 @@ defmodule LeythersCom.Intelligence do
   end
 
   defp maybe_filter_state(query, _state), do: query
+
+  defp maybe_filter_event_queue(query, queue) when is_binary(queue) and queue != "" do
+    where(query, [event], event.queue == ^queue)
+  end
+
+  defp maybe_filter_event_queue(query, _queue), do: query
+
+  defp maybe_filter_event_worker(query, worker) when is_binary(worker) and worker != "" do
+    where(query, [event], ilike(event.worker, ^"%#{worker}%"))
+  end
+
+  defp maybe_filter_event_worker(query, _worker), do: query
+
+  defp maybe_filter_event_state(query, state) when state in @job_filter_states do
+    where(query, [event], event.state == ^state)
+  end
+
+  defp maybe_filter_event_state(query, _state), do: query
+
+  defp maybe_filter_event_time_window_hours(query, time_window_hours) do
+    case positive_integer(time_window_hours, 0) do
+      hours when hours > 0 ->
+        threshold = DateTime.add(DateTime.utc_now(), -hours * 3600, :second)
+        where(query, [event], event.inserted_at >= ^threshold)
+
+      _ ->
+        query
+    end
+  end
+
+  defp terminal_history_query(filters) do
+    queue = Map.get(filters, :queue) || Map.get(filters, "queue")
+    worker = Map.get(filters, :worker) || Map.get(filters, "worker")
+    state = Map.get(filters, :state) || Map.get(filters, "state")
+
+    time_window_hours =
+      Map.get(filters, :time_window_hours) || Map.get(filters, "time_window_hours")
+
+    terminal_states = Map.fetch!(@job_bucket_states, :terminal)
+
+    base_query =
+      JobEffectEvent
+      |> job_effect_events_scope()
+      |> where([event], event.state in ^terminal_states)
+      |> maybe_filter_event_queue(queue)
+      |> maybe_filter_event_worker(worker)
+      |> maybe_filter_event_state(state)
+      |> maybe_filter_event_time_window_hours(time_window_hours)
+
+    latest_per_job =
+      base_query
+      |> group_by([event], event.oban_job_id)
+      |> select([event], %{oban_job_id: event.oban_job_id, inserted_at: max(event.inserted_at)})
+
+    from(event in base_query,
+      join: latest in subquery(latest_per_job),
+      on: event.oban_job_id == latest.oban_job_id and event.inserted_at == latest.inserted_at
+    )
+  end
+
+  defp terminal_history_count(filters) do
+    filters
+    |> terminal_history_query()
+    |> Repo.aggregate(:count, :id)
+  end
+
+  defp terminal_event_to_job_row(event) do
+    %{
+      id: event.oban_job_id,
+      state: event.state,
+      queue: event.queue,
+      worker: event.worker,
+      attempt: event.attempt,
+      max_attempts: nil,
+      inserted_at: event.inserted_at,
+      attempted_at: nil,
+      args: nil,
+      source: :history
+    }
+  end
+
+  defp synthesize_job_from_events([], _job_id), do: nil
+
+  defp synthesize_job_from_events(events, job_id) do
+    latest = List.last(events)
+
+    %{
+      id: job_id,
+      state: latest.state,
+      queue: latest.queue,
+      worker: latest.worker,
+      attempt: latest.attempt,
+      max_attempts: nil,
+      inserted_at: latest.inserted_at,
+      attempted_at: nil,
+      args: nil,
+      attempted_by: nil,
+      source: :history
+    }
+  end
 
   defp maybe_filter_time_window_hours(query, time_window_hours) do
     case positive_integer(time_window_hours, 0) do

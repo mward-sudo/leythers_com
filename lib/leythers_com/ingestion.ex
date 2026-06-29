@@ -97,18 +97,16 @@ defmodule LeythersCom.Ingestion do
 
   def enqueue_article_regeneration(scope, opts) when scope in [:all, :recent] do
     now = opts[:now] || DateTime.utc_now()
-    enqueue_worker? = Keyword.get(opts, :enqueue_worker, true)
+    enqueue_worker? = Keyword.get(opts, :enqueue_worker, regeneration_enqueue_worker?())
 
-    Repo.transaction(fn ->
-      requeued_sources =
-        RawSource
-        |> where([source], source.status == "processed")
-        |> maybe_filter_regeneration_scope(scope, now)
-        |> Repo.update_all(set: [status: "pending"])
-        |> elem(0)
+    requeued_sources =
+      RawSource
+      |> where([source], source.status == "processed")
+      |> maybe_filter_regeneration_scope(scope, now)
+      |> Repo.update_all(set: [status: "pending"])
+      |> elem(0)
 
-      maybe_enqueue_source_editorial_worker(requeued_sources, scope, enqueue_worker?)
-    end)
+    {:ok, maybe_enqueue_source_editorial_worker(requeued_sources, scope, enqueue_worker?)}
   end
 
   def enqueue_article_regeneration(_scope, _opts), do: {:error, :invalid_scope}
@@ -361,7 +359,11 @@ defmodule LeythersCom.Ingestion do
   defp item_matches_keywords?(_item, _keywords), do: false
 
   defp reduce_feed_items(items) do
-    Enum.reduce(items, %{processed: 0, inserted: 0, errors: 0}, &accumulate_feed_item/2)
+    Enum.reduce(
+      items,
+      %{processed: 0, inserted: 0, errors: 0, items: [], new_source_ids: []},
+      &accumulate_feed_item/2
+    )
   end
 
   defp maybe_filter_regeneration_scope(query, :all, _now), do: query
@@ -381,19 +383,58 @@ defmodule LeythersCom.Ingestion do
       {:ok, job} ->
         %{requeued_sources: requeued_sources, job_id: job.id, scope: scope}
 
-      {:error, reason} ->
-        Repo.rollback({:enqueue_failed, reason})
+      {:error, _reason} ->
+        %{requeued_sources: requeued_sources, job_id: nil, scope: scope}
     end
   end
 
+  defp regeneration_enqueue_worker? do
+    Application.get_env(:leythers_com, :regeneration_enqueue_worker, true)
+  end
+
   defp accumulate_feed_item(item, acc) do
-    case upsert_raw_source(item) do
-      {:ok, source} ->
-        inserted = if source.inserted_at == source.updated_at, do: 1, else: 0
-        %{acc | processed: acc.processed + 1, inserted: acc.inserted + inserted}
+    title = Map.get(item, "title")
+    url = Map.get(item, "url")
+
+    {status, source_id} = upsert_raw_source_tracked(item)
+
+    item_detail = %{
+      "title" => title,
+      "url" => url,
+      "status" => to_string(status)
+    }
+
+    new_ids = if status == :new and not is_nil(source_id), do: [source_id], else: []
+
+    %{
+      processed: acc.processed + 1,
+      inserted: acc.inserted + if(status == :new, do: 1, else: 0),
+      errors: acc.errors + if(status == :error, do: 1, else: 0),
+      items: acc.items ++ [item_detail],
+      new_source_ids: acc.new_source_ids ++ new_ids
+    }
+  end
+
+  defp upsert_raw_source_tracked(attrs) do
+    normalized = Basic.normalize(attrs)
+    url = Map.get(normalized, :url) || Map.get(normalized, "url")
+    changeset = RawSource.changeset(%RawSource{}, normalized)
+
+    case Repo.insert(changeset, on_conflict: :nothing, conflict_target: :url) do
+      {:ok, %{id: nil}} ->
+        source = Repo.get_by!(RawSource, url: url)
+        {:seen, source.id}
+
+      {:ok, inserted} when not is_nil(inserted.id) ->
+        _ = EditorialOrchestrator.trigger_source_update_refresh()
+        {:new, inserted.id}
+
+      {:ok, _} ->
+        source = Repo.get_by(RawSource, url: url)
+        {:seen, source && source.id}
 
       {:error, _changeset} ->
-        %{acc | processed: acc.processed + 1, errors: acc.errors + 1}
+        {:error, nil}
     end
   end
 end
