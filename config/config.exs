@@ -110,6 +110,10 @@ config :leythers_com, :editorial_orchestration,
   async_source_refresh: true,
   prompt_version: "homepage_ranker_v1"
 
+config :leythers_com, :intelligence_generation,
+  auto_generation_enabled: true,
+  source_batch_size: 20
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

@@ -11,6 +11,7 @@ defmodule LeythersCom.Ingestion do
   alias LeythersCom.Ingestion.Providers.Rss
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Intelligence.EditorialOrchestrator
+  alias LeythersCom.Intelligence.SourceEditorialWorker
   alias LeythersCom.Repo
 
   def create_raw_source(attrs) do
@@ -71,6 +72,9 @@ defmodule LeythersCom.Ingestion do
       end
 
     emit_feed_ingestion_telemetry(result, started_at, origin_provider, feed_url)
+
+    maybe_enqueue_editorial_generation(result)
+
     result
   end
 
@@ -245,6 +249,22 @@ defmodule LeythersCom.Ingestion do
     )
     |> Repo.all()
     |> Map.new()
+  end
+
+  defp maybe_enqueue_editorial_generation({:ok, %{processed: processed}}) when processed > 0 do
+    if auto_generation_enabled?() do
+      _ = SourceEditorialWorker.enqueue()
+    end
+
+    :ok
+  end
+
+  defp maybe_enqueue_editorial_generation(_result), do: :ok
+
+  defp auto_generation_enabled? do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:auto_generation_enabled, true)
   end
 
   defp ingest_feed_items(feed_url, origin_provider, include_keywords, http_client) do

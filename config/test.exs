@@ -51,6 +51,10 @@ config :leythers_com, :editorial_orchestration,
   async_source_refresh: false,
   prompt_version: "homepage_ranker_test"
 
+config :leythers_com, :intelligence_generation,
+  auto_generation_enabled: false,
+  source_batch_size: 20
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 
