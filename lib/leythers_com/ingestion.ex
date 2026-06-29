@@ -5,8 +5,8 @@ defmodule LeythersCom.Ingestion do
 
   import Ecto.Query
 
-  alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Ingestion.Providers.Basic
+  alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Repo
 
   def create_raw_source(attrs) do

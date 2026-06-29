@@ -1,6 +1,7 @@
 defmodule LeythersCom.Ingestion.RawSourceTest do
   use LeythersCom.DataCase, async: true
 
+  alias Ecto.Changeset
   alias LeythersCom.Ingestion.RawSource
 
   @valid_attrs %{
@@ -12,12 +13,12 @@ defmodule LeythersCom.Ingestion.RawSourceTest do
 
   describe "changeset/2 with valid attributes" do
     test "returns a valid changeset" do
-      assert %Ecto.Changeset{valid?: true} = RawSource.changeset(%RawSource{}, @valid_attrs)
+      assert %Changeset{valid?: true} = RawSource.changeset(%RawSource{}, @valid_attrs)
     end
 
     test "accepts an optional body_summary" do
       attrs = Map.put(@valid_attrs, :body_summary, "Short summary")
-      assert %Ecto.Changeset{valid?: true} = RawSource.changeset(%RawSource{}, attrs)
+      assert %Changeset{valid?: true} = RawSource.changeset(%RawSource{}, attrs)
     end
   end
 
@@ -83,7 +84,7 @@ defmodule LeythersCom.Ingestion.RawSourceTest do
 
     test "allows nil last_check_status" do
       attrs = Map.put(@valid_attrs, :last_check_status, nil)
-      assert %Ecto.Changeset{valid?: true} = RawSource.changeset(%RawSource{}, attrs)
+      assert %Changeset{valid?: true} = RawSource.changeset(%RawSource{}, attrs)
     end
   end
 end

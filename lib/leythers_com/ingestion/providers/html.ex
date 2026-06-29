@@ -55,15 +55,17 @@ defmodule LeythersCom.Ingestion.Providers.Html do
   end
 
   defp first_text(html, selectors) do
-    with {:ok, document} <- Floki.parse_document(html) do
-      selectors
-      |> Enum.find_value(fn selector ->
-        document
-        |> Floki.find(selector)
-        |> extract_selector_text(selector)
-      end)
-    else
-      _ -> nil
+    case Floki.parse_document(html) do
+      {:ok, document} ->
+        selectors
+        |> Enum.find_value(fn selector ->
+          document
+          |> Floki.find(selector)
+          |> extract_selector_text(selector)
+        end)
+
+      _ ->
+        nil
     end
   end
 
@@ -86,10 +88,12 @@ defmodule LeythersCom.Ingestion.Providers.Html do
   defp normalize_text(nil), do: nil
 
   defp normalize_text(text) when is_binary(text) do
-    text
-    |> String.replace(~r/\s+/, " ")
-    |> String.trim()
-    |> case do
+    normalized_text =
+      text
+      |> String.replace(~r/\s+/, " ")
+      |> String.trim()
+
+    case normalized_text do
       "" -> nil
       value -> value
     end

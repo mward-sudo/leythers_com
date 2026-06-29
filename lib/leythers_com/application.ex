@@ -5,6 +5,8 @@ defmodule LeythersCom.Application do
 
   use Application
 
+  alias LeythersComWeb.Endpoint
+
   @impl true
   def start(_type, _args) do
     children = [
@@ -28,7 +30,7 @@ defmodule LeythersCom.Application do
   # whenever the application is updated.
   @impl true
   def config_change(changed, _new, removed) do
-    LeythersComWeb.Endpoint.config_change(changed, removed)
+    Endpoint.config_change(changed, removed)
     :ok
   end
 end

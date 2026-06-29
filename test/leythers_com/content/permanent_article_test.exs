@@ -1,6 +1,7 @@
 defmodule LeythersCom.Content.PermanentArticleTest do
   use LeythersCom.DataCase, async: true
 
+  alias Ecto.Changeset
   alias LeythersCom.Content.PermanentArticle
 
   @valid_attrs %{
@@ -11,14 +12,14 @@ defmodule LeythersCom.Content.PermanentArticleTest do
 
   describe "changeset/2 with valid attributes" do
     test "returns a valid changeset" do
-      assert %Ecto.Changeset{valid?: true} =
+      assert %Changeset{valid?: true} =
                PermanentArticle.changeset(%PermanentArticle{}, @valid_attrs)
     end
 
     test "accepts optional raw_content_backup" do
       attrs = Map.put(@valid_attrs, :raw_content_backup, "raw llm output")
 
-      assert %Ecto.Changeset{valid?: true} =
+      assert %Changeset{valid?: true} =
                PermanentArticle.changeset(%PermanentArticle{}, attrs)
     end
   end
@@ -53,7 +54,7 @@ defmodule LeythersCom.Content.PermanentArticleTest do
       for author_type <- ~w[ai_editor human_admin] do
         attrs = Map.put(@valid_attrs, :author_type, author_type)
 
-        assert %Ecto.Changeset{valid?: true} =
+        assert %Changeset{valid?: true} =
                  PermanentArticle.changeset(%PermanentArticle{}, attrs)
       end
     end

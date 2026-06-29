@@ -6,6 +6,8 @@ defmodule LeythersComWeb.ErrorHTML do
   """
   use LeythersComWeb, :html
 
+  alias Phoenix.Controller
+
   # If you want to customize your error pages,
   # uncomment the embed_templates/1 call below
   # and add pages to the error directory:
@@ -19,6 +21,6 @@ defmodule LeythersComWeb.ErrorHTML do
   # the template name. For example, "404.html" becomes
   # "Not Found".
   def render(template, _assigns) do
-    Phoenix.Controller.status_message_from_template(template)
+    Controller.status_message_from_template(template)
   end
 end

@@ -1,6 +1,7 @@
 defmodule LeythersCom.IngestionTest do
   use LeythersCom.DataCase, async: true
 
+  alias Ecto.UUID
   alias LeythersCom.Ingestion
   alias LeythersCom.Ingestion.RawSource
 
@@ -76,7 +77,7 @@ defmodule LeythersCom.IngestionTest do
 
     test "raises for unknown id" do
       assert_raise Ecto.NoResultsError, fn ->
-        Ingestion.get_raw_source!(Ecto.UUID.generate())
+        Ingestion.get_raw_source!(UUID.generate())
       end
     end
   end

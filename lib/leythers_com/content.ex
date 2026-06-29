@@ -28,15 +28,17 @@ defmodule LeythersCom.Content do
       version: 1
     }
 
-    Repo.transaction(fn ->
-      with {:ok, article} <- create_article(article_attrs),
-           :ok <- insert_article_sources(article.id, source_ids) do
-        article
-      else
-        {:error, changeset} -> Repo.rollback(changeset)
-      end
-    end)
-    |> case do
+    transaction_result =
+      Repo.transaction(fn ->
+        with {:ok, article} <- create_article(article_attrs),
+             :ok <- insert_article_sources(article.id, source_ids) do
+          article
+        else
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
+      end)
+
+    case transaction_result do
       {:ok, article} -> {:ok, article}
       {:error, reason} -> {:error, reason}
     end
@@ -73,12 +75,13 @@ defmodule LeythersCom.Content do
     |> Enum.reject(&blank?/1)
     |> Enum.map(&to_string/1)
     |> Enum.reduce_while(:ok, fn raw_source_id, :ok ->
-      case Repo.insert(
-             ArticleSource.changeset(%ArticleSource{}, %{
-               permanent_article_id: article_id,
-               raw_source_id: raw_source_id
-             })
-           ) do
+      article_source_changeset =
+        ArticleSource.changeset(%ArticleSource{}, %{
+          permanent_article_id: article_id,
+          raw_source_id: raw_source_id
+        })
+
+      case Repo.insert(article_source_changeset) do
         {:ok, _article_source} -> {:cont, :ok}
         {:error, changeset} -> {:halt, {:error, changeset}}
       end

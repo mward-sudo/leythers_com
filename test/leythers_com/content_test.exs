@@ -1,6 +1,7 @@
 defmodule LeythersCom.ContentTest do
   use LeythersCom.DataCase, async: true
 
+  alias Ecto.UUID
   alias LeythersCom.Content
   alias LeythersCom.Content.ArticleSource
   alias LeythersCom.Content.PermanentArticle
@@ -38,7 +39,7 @@ defmodule LeythersCom.ContentTest do
 
     test "raises for unknown id" do
       assert_raise Ecto.NoResultsError, fn ->
-        Content.get_article!(Ecto.UUID.generate())
+        Content.get_article!(UUID.generate())
       end
     end
   end
@@ -114,7 +115,7 @@ defmodule LeythersCom.ContentTest do
                    title: "Leigh Leopards Broken Publish",
                    body: "This publish should fail and roll back."
                  },
-                 [source.id, Ecto.UUID.generate()]
+                 [source.id, UUID.generate()]
                )
 
       assert Repo.aggregate(PermanentArticle, :count, :id) == 0

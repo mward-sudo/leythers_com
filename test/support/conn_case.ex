@@ -17,6 +17,9 @@ defmodule LeythersComWeb.ConnCase do
 
   use ExUnit.CaseTemplate
 
+  alias LeythersCom.DataCase
+  alias Phoenix.ConnTest
+
   using do
     quote do
       # The default endpoint for testing
@@ -32,7 +35,7 @@ defmodule LeythersComWeb.ConnCase do
   end
 
   setup tags do
-    LeythersCom.DataCase.setup_sandbox(tags)
-    {:ok, conn: Phoenix.ConnTest.build_conn()}
+    DataCase.setup_sandbox(tags)
+    {:ok, conn: ConnTest.build_conn()}
   end
 end

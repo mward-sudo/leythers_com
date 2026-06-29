@@ -6,6 +6,7 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
 
   alias LeythersCom.Content
   alias LeythersCom.Ingestion
+  alias LeythersCom.Repo
 
   describe "new/0" do
     test "renders the manual publish form", %{conn: conn} do
@@ -74,6 +75,6 @@ defmodule LeythersComWeb.Admin.ArticlePublishLiveTest do
     from(article_source in LeythersCom.Content.ArticleSource,
       where: article_source.permanent_article_id == ^article_id
     )
-    |> LeythersCom.Repo.aggregate(:count, :id)
+    |> Repo.aggregate(:count, :id)
   end
 end

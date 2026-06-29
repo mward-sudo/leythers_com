@@ -60,16 +60,19 @@ defmodule LeythersCom.Ingestion.Providers.Basic do
         URI.to_string(uri)
 
       %URI{query: query} = uri ->
-        query
-        |> URI.decode_query()
-        |> Enum.reject(fn {key, _value} -> key in @tracking_query_params end)
-        |> Enum.sort_by(fn {key, _value} -> key end)
-        |> URI.encode_query()
-        |> then(fn encoded_query ->
-          uri
-          |> Map.put(:query, if(encoded_query == "", do: nil, else: encoded_query))
-          |> URI.to_string()
-        end)
+        query =
+          query
+          |> URI.decode_query()
+          |> Enum.reject(fn {key, _value} -> key in @tracking_query_params end)
+          |> Enum.sort_by(fn {key, _value} -> key end)
+          |> URI.encode_query()
+
+        uri
+        |> Map.put(:query, empty_query_to_nil(query))
+        |> URI.to_string()
     end
   end
+
+  defp empty_query_to_nil(""), do: nil
+  defp empty_query_to_nil(query), do: query
 end

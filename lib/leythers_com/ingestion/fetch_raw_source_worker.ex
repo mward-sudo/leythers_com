@@ -6,9 +6,9 @@ defmodule LeythersCom.Ingestion.FetchRawSourceWorker do
   use Oban.Worker, queue: :ingestion, max_attempts: 5
 
   alias LeythersCom.Ingestion
+  alias LeythersCom.Ingestion.HttpClient.Req
   alias LeythersCom.Ingestion.Providers.Basic
   alias LeythersCom.Ingestion.Providers.Html
-  alias LeythersCom.Ingestion.HttpClient.Req
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: attrs}) do
