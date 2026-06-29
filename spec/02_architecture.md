@@ -93,9 +93,9 @@ No Oban or LLM call is required for this fast-track route.
 2. UI queries job lifecycle state from Oban-backed data.
 3. UI joins job state with job-effect records and linked domain entities.
 4. Admin can inspect:
-	- source inputs (URL, headline, source summary/body excerpt),
-	- editorial decision outcome (create/update/amalgamate/skip),
-	- resulting article changes and linkage updates.
+   - source inputs (URL, headline, source summary/body excerpt),
+   - editorial decision outcome (create/update/amalgamate/skip),
+   - resulting article changes and linkage updates.
 
 ## Supervision & Runtime Components
 
@@ -116,4 +116,4 @@ Expected application children:
 3. Record source-provenance links for all publishable artifacts.
 4. Use DB constraints to enforce domain safety before app-level checks.
 5. Persist deterministic job-effect summaries so operations UI remains stable even when source/article
-	rows evolve after job completion.
+   rows evolve after job completion.

@@ -152,9 +152,9 @@ Behavior rules:
 
 1. A completed/failed job writes at least one `job_effect_events` row.
 2. `source_input_snapshot` must include source URL, source headline, and source text excerpt used by
-	the job.
+   the job.
 3. For `updated`/`amalgamated` outcomes, `change_details` must include before/after article diffs at
-	minimum for title and body excerpt.
+   minimum for title and body excerpt.
 4. Records are append-only and are not mutated after insert.
 
 Operational rules:

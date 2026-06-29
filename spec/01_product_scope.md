@@ -7,7 +7,7 @@ Build an ultra-low-cost, high-performance Leigh Leopards fan content platform th
 - aggregates rugby league source material,
 - uses LLM judgment sparingly for high-value editorial decisions,
 - generates and updates publishable headline/summary/full-article packages with a distinct fan
-   voice,
+  voice,
 - supports immediate human-authored publishing,
 - stays inside strict monthly spend limits.
 
@@ -49,12 +49,12 @@ Build an ultra-low-cost, high-performance Leigh Leopards fan content platform th
 8. LLM decisions must be auditable (prompt version, inputs, rationale, token/cost metadata).
 9. Generated editorial output must include a headline, a summary teaser, and full article body.
 10. Headlines must lead with a clear Leigh Leopards angle, stay interesting without major spoilers,
-   and avoid misleading clickbait framing.
+    and avoid misleading clickbait framing.
 11. Summary teasers must be accurate, concise, and plain text only (no markup, links, or embedded
-   formatting).
+    formatting).
 12. Full article voice should read like a fan journalist: colloquial Leigh tone, light-hearted
-   rugby-league humour, and British sports-magazine flavor inspired by old-school style writing.
+    rugby-league humour, and British sports-magazine flavor inspired by old-school style writing.
 13. Running jokes should remain occasional and restrained so clarity and factual grounding remain
-   primary.
+    primary.
 14. Every ingestion/editorial job must be traceable from execution state to concrete content outcome
-   (source inputs, decision taken, and resulting article changes).
+    (source inputs, decision taken, and resulting article changes).
