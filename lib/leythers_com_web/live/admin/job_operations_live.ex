@@ -121,7 +121,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
-      <div class="mx-auto px-4 py-6 sm:px-6 xl:px-8" id="job-operations-page">
+      <div class="w-full px-4 py-6 sm:px-6 xl:px-8" id="job-operations-page">
         <%!-- Header --%>
         <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
           <div>
