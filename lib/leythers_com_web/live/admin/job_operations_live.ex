@@ -206,8 +206,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
           </.form>
         </div>
 
-        <%!-- Three-column job board --%>
-        <div class="mt-5 grid gap-4 lg:grid-cols-3" id="job-columns">
+        <%!-- Job columns (stacked) --%>
+        <div class="mt-5 grid gap-4" id="job-columns">
           <%!-- Active --%>
           <div class="rounded-2xl border border-base-300 bg-base-100 p-4 shadow-sm" id="col-active">
             <div class="mb-3 flex items-center gap-2">
