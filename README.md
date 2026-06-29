@@ -2,8 +2,8 @@
 
 To start your Phoenix server:
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+- Run `mix setup` to install and setup dependencies
+- Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
 
 Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
 
@@ -50,7 +50,7 @@ Local Ollama testing:
 
 1. Start Ollama locally.
 2. Pull and run the default model:
-	- `ollama pull qwen3:1.7b`
+   - `ollama pull qwen3:1.7b`
 3. Keep `LLM_API_ENDPOINT=http://127.0.0.1:11434` for cost-free local evaluation.
 
 Health checks:
@@ -62,21 +62,21 @@ Health checks:
 Deployment runbook:
 
 1. Build assets and release:
-	- `mix assets.deploy`
-	- `MIX_ENV=prod mix release`
+   - `mix assets.deploy`
+   - `MIX_ENV=prod mix release`
 2. Run migrations before cutting traffic:
-	- `MIX_ENV=prod mix ecto.migrate`
+   - `MIX_ENV=prod mix ecto.migrate`
 3. Start the release with `PHX_SERVER=true`.
 4. Verify runtime readiness:
-	- `curl -i https://<your-host>/health`
+   - `curl -i https://<your-host>/health`
 5. Verify authenticated admin access and background processing:
-	- log in as admin and open `/admin/overview`
-	- confirm telemetry widgets and failed job panel load successfully
+   - log in as admin and open `/admin/overview`
+   - confirm telemetry widgets and failed job panel load successfully
 
 ## Learn more
 
-* Official website: https://www.phoenixframework.org/
-* Guides: https://phoenix.hexdocs.pm/overview.html
-* Docs: https://phoenix.hexdocs.pm
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+- Official website: https://www.phoenixframework.org/
+- Guides: https://phoenix.hexdocs.pm/overview.html
+- Docs: https://phoenix.hexdocs.pm
+- Forum: https://elixirforum.com/c/phoenix-forum
+- Source: https://github.com/phoenixframework/phoenix

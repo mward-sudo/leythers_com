@@ -45,4 +45,4 @@ Build an ultra-low-cost, high-performance Leigh Leopards fan content platform th
 7. Automated ingestion-to-publishing runs are fully automatic by default.
 8. LLM decisions must be auditable (prompt version, inputs, rationale, token/cost metadata).
 9. Generated editorial tone should be rough fan style with irreverent humour while preserving core
-	factual accuracy.
+   factual accuracy.

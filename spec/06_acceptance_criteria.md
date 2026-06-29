@@ -51,16 +51,16 @@
 ## Editorial Orchestration
 
 1. Homepage layout uses a hybrid ranking model combining LLM-judged importance and deterministic
-	recency scoring.
+   recency scoring.
 2. Homepage layout recalculation is triggered by source updates, with scheduling/rate-limits that
-	balance cost and freshness.
+   balance cost and freshness.
 3. Rumours are clearly labeled in UI and in generated article content.
 4. Automated article lifecycle defaults to updating a recent matching story, and creates a new
-	article only when significance threshold is exceeded.
+   article only when significance threshold is exceeded.
 5. Automated editorial mode can run fully without human approval while preserving manual override.
 6. LLM invocation controls (budget gates, caching, and fallback behavior) keep spend within monthly
-	cap and reduce unnecessary calls.
+   cap and reduce unnecessary calls.
 7. Each LLM decision persists audit metadata: prompt/template version, source inputs,
-	rationale/decision summary, token counts, and estimated cost.
+   rationale/decision summary, token counts, and estimated cost.
 8. Voice consistency checks enforce rough fan tone with irreverent humour while validating core
-	factual grounding to cited sources.
+   factual grounding to cited sources.
