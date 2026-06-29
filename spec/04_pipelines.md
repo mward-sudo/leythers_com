@@ -27,6 +27,11 @@ Failure policy:
 2. Check budget gate before API invocation.
 3. Invoke LLM only when budget allows.
 4. Persist token/cost deltas into `cost_ledgers`.
+5. Ensure generated package includes headline, summary teaser, and full article body.
+6. Enforce headline rule set: Leigh-first angle, non-spoiler framing, no misleading clickbait.
+7. Enforce summary rule set: accurate teaser and plain text only (no links/markup).
+8. Apply fan-journalist house style in body: colloquial Leigh tone, light rugby-league humour,
+   British magazine flavor, restrained recurring jokes.
 
 ### Stage A4: Publish & Attribute
 

@@ -50,7 +50,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         external_published_at: ~U[2026-06-29 10:00:00.000000Z]
       })
 
-    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+    assert :ok =
+             SourceEditorialWorker.perform(%Oban.Job{
+               id: 1001,
+               args: %{},
+               worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+               queue: "intelligence",
+               attempt: 1
+             })
 
     ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
     assert length(ai_articles) == 1
@@ -66,6 +73,21 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert decision.source_count == 2
     assert decision.prompt_version == "source_editorial_test"
     assert decision.permanent_article_id == article.id
+
+    [job_event] = Intelligence.recent_job_effect_events(1)
+    assert job_event.decision_action == "created"
+    assert job_event.oban_job_id == 1001
+    assert job_event.worker == "LeythersCom.Intelligence.SourceEditorialWorker"
+    assert job_event.queue == "intelligence"
+    assert job_event.source_ids |> Enum.sort() == [source_one.id, source_two.id] |> Enum.sort()
+
+    snapshot_titles =
+      job_event.source_input_snapshot
+      |> Map.get("sources", [])
+      |> Enum.map(&Map.get(&1, "title"))
+
+    assert "Leigh confirm squad update ahead of weekend" in snapshot_titles
+    assert "Leigh confirm squad update ahead of derby" in snapshot_titles
 
     assert %RawSource{status: "processed"} = Repo.get!(RawSource, source_one.id)
     assert %RawSource{status: "processed"} = Repo.get!(RawSource, source_two.id)

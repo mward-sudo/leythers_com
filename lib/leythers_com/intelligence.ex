@@ -7,6 +7,7 @@ defmodule LeythersCom.Intelligence do
 
   alias LeythersCom.Intelligence.ArticleGenerationDecision
   alias LeythersCom.Intelligence.CostLedger
+  alias LeythersCom.Intelligence.JobEffectEvent
   alias LeythersCom.Repo
   alias Oban.Job
 
@@ -100,6 +101,40 @@ defmodule LeythersCom.Intelligence do
   def create_article_generation_decision(_attrs) do
     {:error, ArticleGenerationDecision.changeset(%ArticleGenerationDecision{}, %{})}
   end
+
+  def create_job_effect_event(attrs) when is_map(attrs) do
+    %JobEffectEvent{}
+    |> JobEffectEvent.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  def create_job_effect_event(_attrs) do
+    {:error, JobEffectEvent.changeset(%JobEffectEvent{}, %{})}
+  end
+
+  def recent_job_effect_events(limit \\ 50)
+
+  def recent_job_effect_events(limit) when is_integer(limit) and limit > 0 do
+    JobEffectEvent
+    |> order_by([event], desc: event.inserted_at)
+    |> limit(^limit)
+    |> preload([:permanent_article])
+    |> Repo.all()
+  end
+
+  def recent_job_effect_events(_limit), do: []
+
+  def job_effect_events_for_job(oban_job_id)
+
+  def job_effect_events_for_job(oban_job_id) when is_integer(oban_job_id) and oban_job_id > 0 do
+    JobEffectEvent
+    |> where([event], event.oban_job_id == ^oban_job_id)
+    |> order_by([event], asc: event.inserted_at)
+    |> preload([:permanent_article])
+    |> Repo.all()
+  end
+
+  def job_effect_events_for_job(_oban_job_id), do: []
 
   def recent_article_generation_decisions(limit \\ 25)
 

@@ -34,30 +34,30 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: args}) do
+  def perform(%Oban.Job{} = job) do
     if auto_generation_enabled?() do
-      process_pending_sources(args)
+      process_pending_sources(job)
     else
       :ok
     end
   end
 
-  defp process_pending_sources(args) do
+  defp process_pending_sources(%Oban.Job{args: args} = job) do
     source_limit = Map.get(args, "source_limit", default_batch_size())
     max_batches = Map.get(args, "max_batches", max_batches_per_run())
     drain_backlog? = Map.get(args, "drain_backlog", true)
     run_id = Ecto.UUID.generate()
 
-    process_batches(run_id, source_limit, max_batches, drain_backlog?)
+    process_batches(job, run_id, source_limit, max_batches, drain_backlog?)
 
     :ok
   end
 
-  defp process_batches(_run_id, _source_limit, max_batches, _drain_backlog?)
+  defp process_batches(_job, _run_id, _source_limit, max_batches, _drain_backlog?)
        when max_batches <= 0,
        do: :ok
 
-  defp process_batches(run_id, source_limit, max_batches, drain_backlog?) do
+  defp process_batches(job, run_id, source_limit, max_batches, drain_backlog?) do
     pending_sources = fetch_pending_sources(source_limit)
 
     case pending_sources do
@@ -65,7 +65,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         :ok
 
       _ ->
-        {processed_count, budget_blocked?} = process_batch(pending_sources, run_id)
+        {processed_count, budget_blocked?} = process_batch(job, pending_sources, run_id)
 
         cond do
           budget_blocked? ->
@@ -78,7 +78,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             :ok
 
           true ->
-            process_batches(run_id, source_limit, max_batches - 1, true)
+            process_batches(job, run_id, source_limit, max_batches - 1, true)
         end
     end
   end
@@ -91,11 +91,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> Repo.all()
   end
 
-  defp process_batch(pending_sources, run_id) do
+  defp process_batch(job, pending_sources, run_id) do
     pending_sources
     |> cluster_sources()
     |> Enum.reduce_while({0, false}, fn cluster_sources, {processed_total, _} ->
-      case publish_cluster(cluster_sources, run_id) do
+      case publish_cluster(job, cluster_sources, run_id) do
         {:ok, processed_count} ->
           {:cont, {processed_total + processed_count, false}}
 
@@ -105,13 +105,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end)
   end
 
-  defp publish_cluster([], _run_id), do: {:ok, 0}
+  defp publish_cluster(_job, [], _run_id), do: {:ok, 0}
 
-  defp publish_cluster(cluster_sources, run_id) do
+  defp publish_cluster(job, cluster_sources, run_id) do
     source_ids = Enum.map(cluster_sources, & &1.id)
     significance_score = significance_score(cluster_sources)
     threshold = significance_threshold()
     rumour? = rumour_cluster?(cluster_sources)
+    cluster_snapshot = source_snapshot(cluster_sources)
 
     decision_attrs = %{
       run_id: run_id,
@@ -133,34 +134,102 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
           processed_count = mark_sources_processed(source_ids)
           _ = EditorialOrchestrator.trigger_source_update_refresh()
 
+          action_str = to_string(action)
+
+          summary =
+            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs)
+
           persist_decision(
             decision_attrs,
-            to_string(action),
+            action_str,
             article.id,
-            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs),
+            summary,
             llm_cost_attrs
+          )
+
+          persist_job_effect_event(
+            job,
+            action_str,
+            article.id,
+            source_ids,
+            cluster_snapshot,
+            summary,
+            %{
+              significance_score: significance_score,
+              significance_threshold: threshold,
+              source_count: length(source_ids),
+              run_id: run_id,
+              prompt_version: prompt_version(),
+              llm_cost: llm_cost_attrs,
+              rumour: rumour?
+            },
+            nil
           )
 
           {:ok, processed_count}
 
-        _ ->
+        {:error, reason} ->
+          summary =
+            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs)
+
           persist_decision(
             decision_attrs,
             "skipped_publish_error",
             nil,
-            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs),
+            summary,
             llm_cost_attrs
+          )
+
+          persist_job_effect_event(
+            job,
+            "skipped_publish_error",
+            nil,
+            source_ids,
+            cluster_snapshot,
+            summary,
+            %{
+              significance_score: significance_score,
+              significance_threshold: threshold,
+              source_count: length(source_ids),
+              run_id: run_id,
+              prompt_version: prompt_version(),
+              llm_cost: llm_cost_attrs,
+              rumour: rumour?
+            },
+            inspect(reason)
           )
 
           {:ok, 0}
       end
     else
+      summary =
+        decision_summary(significance_score, threshold, source_ids, rumour?, zero_cost_attrs())
+
       persist_decision(
         decision_attrs,
         "skipped_budget",
         nil,
-        decision_summary(significance_score, threshold, source_ids, rumour?, zero_cost_attrs()),
+        summary,
         zero_cost_attrs()
+      )
+
+      persist_job_effect_event(
+        job,
+        "skipped_budget",
+        nil,
+        source_ids,
+        cluster_snapshot,
+        summary,
+        %{
+          significance_score: significance_score,
+          significance_threshold: threshold,
+          source_count: length(source_ids),
+          run_id: run_id,
+          prompt_version: prompt_version(),
+          llm_cost: zero_cost_attrs(),
+          rumour: rumour?
+        },
+        nil
       )
 
       {:halt, :budget_blocked}
@@ -530,6 +599,61 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp normalize_args(args) do
     args
     |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
+  end
+
+  defp source_snapshot(cluster_sources) do
+    %{
+      "sources" =>
+        Enum.map(cluster_sources, fn source ->
+          %{
+            "id" => source.id,
+            "origin_provider" => source.origin_provider,
+            "title" => source.title,
+            "url" => source.url,
+            "inserted_at" => source.inserted_at,
+            "external_published_at" => source.external_published_at
+          }
+        end)
+    }
+  end
+
+  defp persist_job_effect_event(
+         job,
+         decision_action,
+         permanent_article_id,
+         source_ids,
+         source_input_snapshot,
+         change_summary,
+         change_details,
+         error_summary
+       ) do
+    oban_job_id = if is_integer(job.id), do: job.id, else: 0
+    queue = if is_binary(job.queue), do: job.queue, else: "intelligence"
+
+    worker =
+      if is_binary(job.worker),
+        do: job.worker,
+        else: __MODULE__ |> Module.split() |> Enum.join(".")
+
+    attempt = if is_integer(job.attempt), do: max(job.attempt, 1), else: 1
+
+    _ =
+      Intelligence.create_job_effect_event(%{
+        oban_job_id: oban_job_id,
+        worker: worker,
+        queue: queue,
+        state: "completed",
+        attempt: attempt,
+        decision_action: decision_action,
+        permanent_article_id: permanent_article_id,
+        source_ids: source_ids,
+        source_input_snapshot: source_input_snapshot,
+        change_summary: change_summary,
+        change_details: change_details,
+        error_summary: error_summary
+      })
+
+    :ok
   end
 
   defp blank?(value), do: value in [nil, ""]

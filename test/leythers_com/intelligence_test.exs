@@ -306,6 +306,65 @@ defmodule LeythersCom.IntelligenceTest do
     end
   end
 
+  describe "job effect events" do
+    test "creates and queries events by job id" do
+      assert {:ok, first} =
+               Intelligence.create_job_effect_event(%{
+                 oban_job_id: 101,
+                 worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+                 queue: "intelligence",
+                 state: "completed",
+                 attempt: 1,
+                 decision_action: "created",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_input_snapshot: %{"items" => [%{"title" => "Leigh headline"}]},
+                 change_summary: "created article",
+                 change_details: %{source_count: 1}
+               })
+
+      assert {:ok, second} =
+               Intelligence.create_job_effect_event(%{
+                 oban_job_id: 101,
+                 worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+                 queue: "intelligence",
+                 state: "completed",
+                 attempt: 1,
+                 decision_action: "updated",
+                 source_ids: [Ecto.UUID.generate()],
+                 source_input_snapshot: %{"items" => [%{"title" => "Leigh follow up"}]},
+                 change_summary: "updated article",
+                 change_details: %{source_count: 1}
+               })
+
+      assert {:ok, _third} =
+               Intelligence.create_job_effect_event(%{
+                 oban_job_id: 202,
+                 worker: "LeythersCom.Ingestion.FetchRssFeedWorker",
+                 queue: "ingestion",
+                 state: "retryable",
+                 attempt: 2,
+                 decision_action: "skipped_publish_error",
+                 source_ids: [],
+                 source_input_snapshot: %{"feed" => %{"url" => "https://example.com/rss.xml"}},
+                 change_summary: "processed 0; inserted 0; errors 1",
+                 change_details: %{processed: 0, inserted: 0, errors: 1},
+                 error_summary: "timeout"
+               })
+
+      by_job = Intelligence.job_effect_events_for_job(101)
+      assert Enum.map(by_job, & &1.id) == [first.id, second.id]
+
+      recent = Intelligence.recent_job_effect_events(2)
+      assert length(recent) == 2
+      assert Enum.map(recent, & &1.oban_job_id) == [202, 101]
+    end
+
+    test "returns empty lists for invalid limits and ids" do
+      assert Intelligence.recent_job_effect_events(0) == []
+      assert Intelligence.job_effect_events_for_job(0) == []
+    end
+  end
+
   describe "list_failed_jobs/1" do
     test "returns retryable and discarded jobs" do
       discarded_job = create_failed_oban_job("discarded")

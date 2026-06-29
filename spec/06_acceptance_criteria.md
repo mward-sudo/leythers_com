@@ -62,8 +62,13 @@
    cap and reduce unnecessary calls.
 7. Each LLM decision persists audit metadata: prompt/template version, source inputs,
    rationale/decision summary, token counts, and estimated cost.
-8. Voice consistency checks enforce rough fan tone with irreverent humour while validating core
-   factual grounding to cited sources.
+8. Generated article output always includes: headline, plain-text summary teaser, and full article
+   body.
+9. Headline checks enforce Leigh-first angle, non-spoiler framing, and no misleading clickbait.
+10. Summary checks enforce factual accuracy to cited sources and plain text output (no markup or
+    links).
+11. Body style checks enforce fan-journalist tone: colloquial Leigh voice, light rugby-league
+    humour, and restrained running jokes while preserving factual grounding.
 
 ## Admin Job Operations Panel
 

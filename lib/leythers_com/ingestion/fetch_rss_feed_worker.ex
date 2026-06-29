@@ -6,13 +6,27 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
   use Oban.Worker, queue: :ingestion, max_attempts: 5
 
   alias LeythersCom.Ingestion
+  alias LeythersCom.Intelligence
   alias LeythersCom.Ingestion.HttpClient.Req
 
   @impl Oban.Worker
-  def perform(%Oban.Job{args: attrs}) do
+  def perform(%Oban.Job{} = job) do
+    attrs = job.args
+
     case Ingestion.ingest_rss_feed(attrs, Req) do
-      {:ok, _stats} -> :ok
-      {:error, reason} -> {:error, inspect(reason)}
+      {:ok, stats} ->
+        persist_job_effect_event(job, attrs, stats, nil)
+        :ok
+
+      {:error, reason} ->
+        persist_job_effect_event(
+          job,
+          attrs,
+          %{processed: 0, inserted: 0, errors: 1},
+          inspect(reason)
+        )
+
+        {:error, inspect(reason)}
     end
   end
 
@@ -66,4 +80,51 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorker do
   defp normalize_multiplier(value) when is_integer(value) and value > 0, do: value / 1
   defp normalize_multiplier(value) when is_float(value) and value > 0.0, do: value
   defp normalize_multiplier(_), do: 1.0
+
+  defp persist_job_effect_event(job, attrs, stats, error_summary) do
+    oban_job_id = if is_integer(job.id), do: job.id, else: 0
+
+    worker =
+      if is_binary(job.worker),
+        do: job.worker,
+        else: __MODULE__ |> Module.split() |> Enum.join(".")
+
+    queue = if is_binary(job.queue), do: job.queue, else: "ingestion"
+    attempt = if is_integer(job.attempt), do: max(job.attempt, 1), else: 1
+
+    source_ids = []
+
+    source_input_snapshot = %{
+      "feed" => %{
+        "url" => Map.get(attrs, "url"),
+        "origin_provider" => Map.get(attrs, "origin_provider"),
+        "include_keywords" => Map.get(attrs, "include_keywords", [])
+      },
+      "items" => source_ids
+    }
+
+    decision_action = if error_summary, do: "skipped_publish_error", else: "no_op"
+
+    _ =
+      Intelligence.create_job_effect_event(%{
+        oban_job_id: oban_job_id,
+        worker: worker,
+        queue: queue,
+        state: if(error_summary, do: "retryable", else: "completed"),
+        attempt: attempt,
+        decision_action: decision_action,
+        source_ids: source_ids,
+        source_input_snapshot: source_input_snapshot,
+        change_summary:
+          "processed #{Map.get(stats, :processed, 0)}; inserted #{Map.get(stats, :inserted, 0)}; errors #{Map.get(stats, :errors, 0)}",
+        change_details: %{
+          processed: Map.get(stats, :processed, 0),
+          inserted: Map.get(stats, :inserted, 0),
+          errors: Map.get(stats, :errors, 0)
+        },
+        error_summary: error_summary
+      })
+
+    :ok
+  end
 end

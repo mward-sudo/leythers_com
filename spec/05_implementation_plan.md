@@ -85,15 +85,28 @@ Tasks:
 1. Define an explicit voice guide (rough fan style, irreverent humour, sentence rhythm, rumour
    framing rules).
 2. Add a `voice profile` configuration layer that can be applied to manual and generated content.
-3. Implement deterministic style transforms that run without LLM cost where possible.
-4. Add preview tooling in admin to compare "raw summary" vs "voice-adjusted" output.
-5. Add tests to lock down headline/body style constraints, rumour labeling behavior, and prevent
+3. Define output contract for every generated article package:
+   - headline,
+   - plain-text summary teaser,
+   - full article body.
+4. Implement headline policy enforcement:
+   - lead with a clear Leigh angle,
+   - stay interesting without major spoilers,
+   - avoid misleading clickbait framing.
+5. Implement summary policy enforcement:
+   - accurate to cited source facts,
+   - plain text only (no markdown/HTML/links),
+   - teaser-style copy that encourages full-read.
+6. Implement deterministic style transforms that run without LLM cost where possible.
+7. Add preview tooling in admin to compare "raw summary" vs "voice-adjusted" output.
+8. Add tests to lock down headline/summary/body style constraints, rumour labeling behavior, and prevent
    drift.
 
 Deliverables:
 
 1. Consistent site voice across manually authored and automated content.
 2. Voice rules are versioned, testable, and easy to tune.
+3. Generated output consistently satisfies the headline + summary + full-article contract.
 
 ## Phase C: Cost-Optimized Aggregation Pipeline (Next Priority)
 

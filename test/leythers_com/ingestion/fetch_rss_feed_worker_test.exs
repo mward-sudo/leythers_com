@@ -3,6 +3,7 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorkerTest do
 
   alias LeythersCom.Ingestion
   alias LeythersCom.Ingestion.FetchRssFeedWorker
+  alias LeythersCom.Intelligence
 
   defmodule FakeFeedClient do
     def fetch(_url) do
@@ -83,5 +84,23 @@ defmodule LeythersCom.Ingestion.FetchRssFeedWorkerTest do
       job = %Oban.Job{attempt: 12, args: %{"origin_provider" => "google_news_leigh_leopards"}}
       assert FetchRssFeedWorker.backoff(job) == 1800
     end
+  end
+
+  test "perform/1 records a retryable job effect event when feed attrs are invalid" do
+    job = %Oban.Job{
+      id: 901,
+      args: %{"origin_provider" => "bbc_rugby_league"},
+      worker: "LeythersCom.Ingestion.FetchRssFeedWorker",
+      queue: "ingestion",
+      attempt: 1
+    }
+
+    assert {:error, _reason} = FetchRssFeedWorker.perform(job)
+
+    [event | _] = Intelligence.job_effect_events_for_job(901)
+    assert event.decision_action == "skipped_publish_error"
+    assert event.state == "retryable"
+    assert event.worker == "LeythersCom.Ingestion.FetchRssFeedWorker"
+    assert event.queue == "ingestion"
   end
 end
