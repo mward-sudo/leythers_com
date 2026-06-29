@@ -25,13 +25,24 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_prompt_version "source_editorial_v1"
   @default_llm_grouping_min_jaccard 0.0
   @default_grouping_llm_timeout_ms 1_200
+  @default_enqueue_unique_seconds 3_600
+  @default_worker_timeout_ms :timer.minutes(10)
 
   def enqueue(attrs \\ %{}) when is_map(attrs) do
     attrs
     |> normalize_args()
-    |> new(unique: [fields: [:worker], period: 60, states: [:available, :scheduled, :executing]])
+    |> new(
+      unique: [
+        fields: [:worker],
+        period: enqueue_unique_seconds(),
+        states: [:available, :scheduled, :executing]
+      ]
+    )
     |> Oban.insert()
   end
+
+  @impl Oban.Worker
+  def timeout(%Oban.Job{} = _job), do: worker_timeout_ms()
 
   @impl Oban.Worker
   def perform(%Oban.Job{} = job) do
@@ -572,6 +583,18 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:prompt_version, @default_prompt_version)
+  end
+
+  defp enqueue_unique_seconds do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:source_editorial_enqueue_unique_seconds, @default_enqueue_unique_seconds)
+  end
+
+  defp worker_timeout_ms do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms)
   end
 
   defp persist_decision(base_attrs, action, article_id, summary, llm_cost_attrs) do

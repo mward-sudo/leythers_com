@@ -74,7 +74,11 @@ if config_env() == :prod do
   config :leythers_com, Oban,
     repo: LeythersCom.Repo,
     plugins: [
-      {Oban.Plugins.Pruner, max_age: env_int.("OBAN_PRUNER_MAX_AGE_SECONDS", 60 * 60 * 24 * 7)}
+      {Oban.Plugins.Pruner, max_age: env_int.("OBAN_PRUNER_MAX_AGE_SECONDS", 60 * 60 * 24 * 7)},
+      {
+        Oban.Plugins.Lifeline,
+        rescue_after: env_int.("OBAN_LIFELINE_RESCUE_AFTER_MS", :timer.minutes(30))
+      }
     ],
     queues: [
       default: env_int.("OBAN_QUEUE_DEFAULT", 5),

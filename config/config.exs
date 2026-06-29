@@ -114,6 +114,8 @@ config :leythers_com, :intelligence_generation,
   auto_generation_enabled: true,
   source_batch_size: 20,
   max_batches_per_run: 20,
+  source_editorial_enqueue_unique_seconds: 3600,
+  source_editorial_worker_timeout_ms: 600_000,
   significance_threshold: 70,
   prompt_version: "source_editorial_v1",
   llm_draft_enabled: true,
@@ -128,7 +130,7 @@ config :phoenix, :json_library, Jason
 # Configure Oban
 config :leythers_com, Oban,
   repo: LeythersCom.Repo,
-  plugins: [Oban.Plugins.Pruner],
+  plugins: [Oban.Plugins.Pruner, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(30)}],
   queues: [default: 10, ingestion: 5, intelligence: 2]
 
 # Configure real web feeds for ingestion

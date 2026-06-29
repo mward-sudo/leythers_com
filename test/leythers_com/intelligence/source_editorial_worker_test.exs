@@ -19,6 +19,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       auto_generation_enabled: true,
       source_batch_size: 20,
       max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
       significance_threshold: 70,
       prompt_version: "source_editorial_test",
       llm_draft_enabled: false,
@@ -29,6 +31,25 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     )
 
     :ok
+  end
+
+  test "uses configured worker timeout for execution guard" do
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 90_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: false,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    assert SourceEditorialWorker.timeout(%Oban.Job{args: %{}}) == 90_000
   end
 
   test "publishes AI article from pending sources and marks them processed" do
