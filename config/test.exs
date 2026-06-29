@@ -13,6 +13,7 @@ config :leythers_com, LeythersCom.Repo,
   password: "postgres",
   hostname: "localhost",
   database: "leythers_com_test#{System.get_env("MIX_TEST_PARTITION")}",
+  prepare: :unnamed,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
