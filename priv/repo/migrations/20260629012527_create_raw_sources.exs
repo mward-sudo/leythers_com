@@ -22,10 +22,12 @@ defmodule LeythersCom.Repo.Migrations.CreateRawSources do
     create index(:raw_sources, [:last_check_status])
 
     create constraint(:raw_sources, :status_values,
-             check: "status IN ('pending','processed','ignored')")
+             check: "status IN ('pending','processed','ignored')"
+           )
 
     create constraint(:raw_sources, :last_check_status_values,
              check:
-               "last_check_status IS NULL OR last_check_status IN ('ok','redirected','broken')")
+               "last_check_status IS NULL OR last_check_status IN ('ok','redirected','broken')"
+           )
   end
 end

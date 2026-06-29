@@ -15,5 +15,7 @@ defmodule LeythersCom.Content.ArticleSource do
     article_source
     |> cast(attrs, [:permanent_article_id, :raw_source_id])
     |> validate_required([:permanent_article_id])
+    |> foreign_key_constraint(:permanent_article_id)
+    |> foreign_key_constraint(:raw_source_id)
   end
 end

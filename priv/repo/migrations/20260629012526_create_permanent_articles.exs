@@ -20,12 +20,13 @@ defmodule LeythersCom.Repo.Migrations.CreatePermanentArticles do
     create index(:permanent_articles, [:author_type])
 
     create constraint(:permanent_articles, :author_type_values,
-             check: "author_type IN ('ai_editor','human_admin')")
+             check: "author_type IN ('ai_editor','human_admin')"
+           )
 
     create constraint(:permanent_articles, :status_values,
-             check: "status IN ('draft','published')")
+             check: "status IN ('draft','published')"
+           )
 
-    create constraint(:permanent_articles, :version_positive,
-             check: "version >= 1")
+    create constraint(:permanent_articles, :version_positive, check: "version >= 1")
   end
 end

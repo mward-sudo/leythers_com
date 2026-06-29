@@ -14,13 +14,10 @@ defmodule LeythersCom.Repo.Migrations.CreateCostLedgers do
 
     create unique_index(:cost_ledgers, [:date])
 
-    create constraint(:cost_ledgers, :non_negative_input_tokens,
-             check: "input_tokens >= 0")
+    create constraint(:cost_ledgers, :non_negative_input_tokens, check: "input_tokens >= 0")
 
-    create constraint(:cost_ledgers, :non_negative_output_tokens,
-             check: "output_tokens >= 0")
+    create constraint(:cost_ledgers, :non_negative_output_tokens, check: "output_tokens >= 0")
 
-    create constraint(:cost_ledgers, :non_negative_cost,
-             check: "estimated_cost_gbp >= 0")
+    create constraint(:cost_ledgers, :non_negative_cost, check: "estimated_cost_gbp >= 0")
   end
 end

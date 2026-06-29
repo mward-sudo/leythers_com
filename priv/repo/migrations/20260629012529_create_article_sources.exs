@@ -1,4 +1,8 @@
 defmodule LeythersCom.Repo.Migrations.CreateArticleSources do
+  @moduledoc """
+  Creates the article_sources join table for content attribution links.
+  """
+
   use Ecto.Migration
 
   def change do

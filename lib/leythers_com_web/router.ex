@@ -18,6 +18,7 @@ defmodule LeythersComWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    live "/admin/articles/new", Admin.ArticlePublishLive
   end
 
   # Other scopes may use custom stacks.

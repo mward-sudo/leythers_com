@@ -1,4 +1,8 @@
 defmodule LeythersCom.MixProject do
+  @moduledoc """
+  Mix project configuration for LeythersCom.
+  """
+
   use Mix.Project
 
   def project do
