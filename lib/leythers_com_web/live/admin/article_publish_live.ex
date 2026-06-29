@@ -27,6 +27,12 @@ defmodule LeythersComWeb.Admin.ArticlePublishLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope}>
       <div class="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+        <div class="mb-4 flex justify-end">
+          <.link navigate={~p"/admin/overview"} class="btn btn-outline btn-sm">
+            View Admin Overview
+          </.link>
+        </div>
+
         <div class="overflow-hidden rounded-3xl border border-base-300 bg-base-100 shadow-2xl shadow-base-300/20">
           <div class="h-1 bg-gradient-to-r from-primary via-secondary to-accent" />
 

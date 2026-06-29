@@ -202,4 +202,41 @@ defmodule LeythersCom.IntelligenceTest do
       assert {:error, :over_budget} = Intelligence.ensure_generation_allowed!(~D[2026-06-01])
     end
   end
+
+  describe "recent_cost_ledgers/1" do
+    test "returns most recent ledgers first and respects the limit" do
+      {:ok, _} =
+        Intelligence.upsert_cost_ledger(%{
+          date: ~D[2026-06-08],
+          input_tokens: 10,
+          output_tokens: 5,
+          estimated_cost_gbp: Decimal.new("1.00")
+        })
+
+      {:ok, _} =
+        Intelligence.upsert_cost_ledger(%{
+          date: ~D[2026-06-09],
+          input_tokens: 20,
+          output_tokens: 10,
+          estimated_cost_gbp: Decimal.new("2.00")
+        })
+
+      {:ok, _} =
+        Intelligence.upsert_cost_ledger(%{
+          date: ~D[2026-06-10],
+          input_tokens: 30,
+          output_tokens: 15,
+          estimated_cost_gbp: Decimal.new("3.00")
+        })
+
+      ledgers = Intelligence.recent_cost_ledgers(2)
+
+      assert length(ledgers) == 2
+      assert Enum.map(ledgers, & &1.date) == [~D[2026-06-10], ~D[2026-06-09]]
+    end
+
+    test "returns empty list for non-positive limits" do
+      assert Intelligence.recent_cost_ledgers(0) == []
+    end
+  end
 end

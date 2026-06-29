@@ -6,6 +6,7 @@ defmodule LeythersCom.Content do
   alias LeythersCom.Content.ArticleSource
   alias LeythersCom.Content.PermanentArticle
   alias LeythersCom.Content.Slug
+  alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Repo
 
   def create_article(attrs) do
@@ -68,6 +69,24 @@ defmodule LeythersCom.Content do
     |> maybe_filter_status(opts[:status])
     |> Repo.all()
   end
+
+  def list_recent_articles_with_sources(limit \\ 10)
+
+  def list_recent_articles_with_sources(limit) when is_integer(limit) and limit > 0 do
+    import Ecto.Query
+
+    articles =
+      PermanentArticle
+      |> order_by([article], desc: article.inserted_at)
+      |> limit(^limit)
+      |> Repo.all()
+
+    Enum.map(articles, fn article ->
+      %{article: article, sources: list_sources_for_article(article.id)}
+    end)
+  end
+
+  def list_recent_articles_with_sources(_limit), do: []
 
   def delete_smoke_test_articles do
     delete_articles_by_slug_prefix("smoke-test-")
@@ -150,6 +169,25 @@ defmodule LeythersCom.Content do
         |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
         |> Map.put("version", next_version)
     end
+  end
+
+  defp list_sources_for_article(article_id) do
+    import Ecto.Query
+
+    from(article_source in ArticleSource,
+      join: raw_source in RawSource,
+      on: article_source.raw_source_id == raw_source.id,
+      where: article_source.permanent_article_id == ^article_id,
+      order_by: [asc: raw_source.inserted_at],
+      select: %{
+        id: raw_source.id,
+        title: raw_source.title,
+        url: raw_source.url,
+        origin_provider: raw_source.origin_provider,
+        last_check_status: raw_source.last_check_status
+      }
+    )
+    |> Repo.all()
   end
 
   defp blank?(value), do: value in [nil, ""]

@@ -59,6 +59,17 @@ defmodule LeythersCom.Intelligence do
     result || Decimal.new("0")
   end
 
+  def recent_cost_ledgers(limit \\ 14)
+
+  def recent_cost_ledgers(limit) when is_integer(limit) and limit > 0 do
+    CostLedger
+    |> order_by([ledger], desc: ledger.date)
+    |> limit(^limit)
+    |> Repo.all()
+  end
+
+  def recent_cost_ledgers(_limit), do: []
+
   def monthly_budget_state(%Date{} = date, monthly_budget_gbp) do
     monthly_spend = monthly_spend(date)
     monthly_budget = to_decimal(monthly_budget_gbp)
