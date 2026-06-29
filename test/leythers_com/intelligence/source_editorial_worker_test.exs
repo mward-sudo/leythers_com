@@ -22,6 +22,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       significance_threshold: 70,
       prompt_version: "source_editorial_test",
       llm_draft_enabled: false,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
       llm_cost_per_1k_tokens_gbp: "0.000000"
     )
 
@@ -220,6 +223,79 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert decision.decision_action == "created"
   end
 
+  test "groups contract-hint and playing-future Charnley headlines into one article" do
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title:
+                 "Josh Charnley drops major contract hint as Leigh Leopards star confirms intentions to go round again",
+               url: "https://example.com/charnley-contract-hint",
+               body_summary: "Provider one reports contract hint details.",
+               origin_provider: "provider_one",
+               external_published_at: ~U[2026-06-29 19:00:00.000000Z]
+             })
+
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title:
+                 "Josh Charnley sends message to Leigh Leopards on playing future - Love Rugby League",
+               url: "https://example.com/charnley-playing-future",
+               body_summary: "Provider two reports on playing future message.",
+               origin_provider: "provider_two",
+               external_published_at: ~U[2026-06-29 19:05:00.000000Z]
+             })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert length(ai_articles) == 1
+
+    [article] = ai_articles
+    assert article.title =~ "Josh Charnley"
+    assert count_article_sources(article.id) == 2
+  end
+
+  test "uses optional llm grouping for borderline headline similarity" do
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: false,
+      llm_grouping_enabled: true,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 100,
+      grouping_similarity_classifier: fn _a, _b -> true end,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title: "Leigh edge dramatic away thriller in Toulouse",
+               url: "https://example.com/llm-grouping-1",
+               body_summary: "Provider one reports late-game drama.",
+               origin_provider: "provider_one",
+               external_published_at: ~U[2026-06-29 18:00:00.000000Z]
+             })
+
+    assert {:ok, _} =
+             Ingestion.create_raw_source(%{
+               title: "Lam says Leopards showed steel in hard-fought road win",
+               url: "https://example.com/llm-grouping-2",
+               body_summary: "Provider two covers coach reaction from same match.",
+               origin_provider: "provider_two",
+               external_published_at: ~U[2026-06-29 18:05:00.000000Z]
+             })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert length(ai_articles) == 1
+
+    [article] = ai_articles
+    assert count_article_sources(article.id) == 2
+  end
+
   test "drains pending backlog across multiple batches in one run" do
     Application.put_env(:leythers_com, :intelligence_generation,
       auto_generation_enabled: true,
@@ -228,6 +304,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       significance_threshold: 70,
       prompt_version: "source_editorial_test",
       llm_draft_enabled: false,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
       llm_cost_per_1k_tokens_gbp: "0.000000"
     )
 

@@ -117,6 +117,9 @@ config :leythers_com, :intelligence_generation,
   significance_threshold: 70,
   prompt_version: "source_editorial_v1",
   llm_draft_enabled: true,
+  llm_grouping_enabled: true,
+  llm_grouping_min_jaccard: 0.0,
+  grouping_llm_timeout_ms: 1_200,
   llm_cost_per_1k_tokens_gbp: "0.000000"
 
 # Use Jason for JSON parsing in Phoenix

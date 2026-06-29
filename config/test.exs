@@ -58,6 +58,9 @@ config :leythers_com, :intelligence_generation,
   significance_threshold: 70,
   prompt_version: "source_editorial_test",
   llm_draft_enabled: false,
+  llm_grouping_enabled: false,
+  llm_grouping_min_jaccard: 0.0,
+  grouping_llm_timeout_ms: 10,
   llm_cost_per_1k_tokens_gbp: "0.000000"
 
 # Initialize plugs at runtime for faster test compilation

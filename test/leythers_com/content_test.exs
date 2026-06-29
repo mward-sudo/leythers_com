@@ -399,6 +399,44 @@ defmodule LeythersCom.ContentTest do
       assert count_article_sources(updated_article.id) == 2
     end
 
+    test "updates same ai article for similar Charnley contract and playing future titles" do
+      source_id_one =
+        create_source_id!(
+          "Charnley contract source",
+          "https://example.com/ai-charnley-contract-source"
+        )
+
+      source_id_two =
+        create_source_id!(
+          "Charnley future source",
+          "https://example.com/ai-charnley-future-source"
+        )
+
+      assert {:ok, :created, created_article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title:
+                     "Josh Charnley drops major contract hint as Leigh Leopards star confirms intentions to go round again",
+                   body: "Initial contract hint version"
+                 },
+                 [source_id_one]
+               )
+
+      assert {:ok, :updated, updated_article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title:
+                     "Josh Charnley sends message to Leigh Leopards on playing future - Love Rugby League",
+                   body: "Updated playing future version"
+                 },
+                 [source_id_two]
+               )
+
+      assert updated_article.id == created_article.id
+      assert updated_article.version == created_article.version + 1
+      assert count_article_sources(updated_article.id) == 2
+    end
+
     test "creates a new ai article when change is significant" do
       source_id =
         create_source_id!("Leigh significant source", "https://example.com/ai-significant-source")
