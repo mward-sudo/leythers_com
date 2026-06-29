@@ -17,7 +17,9 @@ defmodule LeythersCom.Content.PermanentArticleTest do
 
     test "accepts optional raw_content_backup" do
       attrs = Map.put(@valid_attrs, :raw_content_backup, "raw llm output")
-      assert %Ecto.Changeset{valid?: true} = PermanentArticle.changeset(%PermanentArticle{}, attrs)
+
+      assert %Ecto.Changeset{valid?: true} =
+               PermanentArticle.changeset(%PermanentArticle{}, attrs)
     end
   end
 
@@ -50,7 +52,9 @@ defmodule LeythersCom.Content.PermanentArticleTest do
     test "accepts valid author_type values" do
       for author_type <- ~w[ai_editor human_admin] do
         attrs = Map.put(@valid_attrs, :author_type, author_type)
-        assert %Ecto.Changeset{valid?: true} = PermanentArticle.changeset(%PermanentArticle{}, attrs)
+
+        assert %Ecto.Changeset{valid?: true} =
+                 PermanentArticle.changeset(%PermanentArticle{}, attrs)
       end
     end
 
@@ -70,7 +74,9 @@ defmodule LeythersCom.Content.PermanentArticleTest do
     test "accepts valid status values" do
       for status <- ~w[draft published] do
         attrs = Map.put(@valid_attrs, :status, status)
-        assert %Ecto.Changeset{valid?: true} = PermanentArticle.changeset(%PermanentArticle{}, attrs)
+
+        assert %Ecto.Changeset{valid?: true} =
+                 PermanentArticle.changeset(%PermanentArticle{}, attrs)
       end
     end
 
