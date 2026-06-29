@@ -174,7 +174,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               llm_cost: llm_cost_attrs,
               rumour: rumour?
             },
-            nil
+            nil,
+            run_id
           )
 
           {:ok, processed_count}
@@ -207,7 +208,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               llm_cost: llm_cost_attrs,
               rumour: rumour?
             },
-            inspect(reason)
+            inspect(reason),
+            run_id
           )
 
           {:ok, 0}
@@ -240,7 +242,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
           llm_cost: zero_cost_attrs(),
           rumour: rumour?
         },
-        nil
+        nil,
+        run_id
       )
 
       {:halt, :budget_blocked}
@@ -664,7 +667,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
          source_input_snapshot,
          change_summary,
          change_details,
-         error_summary
+         error_summary,
+         process_run_id
        ) do
     oban_job_id = if is_integer(job.id), do: job.id, else: 0
     queue = if is_binary(job.queue), do: job.queue, else: "intelligence"
@@ -675,7 +679,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         else: __MODULE__ |> Module.split() |> Enum.join(".")
 
     attempt = if is_integer(job.attempt), do: max(job.attempt, 1), else: 1
-    process_run_id = Map.get(change_details, :run_id)
 
     _ =
       Intelligence.create_job_effect_event(%{
