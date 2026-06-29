@@ -80,4 +80,34 @@ defmodule LeythersCom.IngestionTest do
       end
     end
   end
+
+  describe "record_raw_source_health/2" do
+    test "updates health fields on an existing source" do
+      {:ok, source} = Ingestion.create_raw_source(@valid_attrs)
+
+      {:ok, updated_source} =
+        Ingestion.record_raw_source_health(source, %{
+          last_checked_at: ~U[2026-06-29 12:00:00.000000Z],
+          last_check_status: "ok"
+        })
+
+      assert updated_source.last_checked_at == ~U[2026-06-29 12:00:00.000000Z]
+      assert updated_source.last_check_status == "ok"
+      assert updated_source.id == source.id
+    end
+
+    test "canonicalizes redirected urls before persisting" do
+      {:ok, source} = Ingestion.create_raw_source(@valid_attrs)
+
+      {:ok, updated_source} =
+        Ingestion.record_raw_source_health(source, %{
+          last_checked_at: ~U[2026-06-29 12:00:00.000000Z],
+          last_check_status: "redirected",
+          url: "https://example.com/leigh-win?utm_medium=email&gclid=abc123"
+        })
+
+      assert updated_source.last_check_status == "redirected"
+      assert updated_source.url == "https://example.com/leigh-win"
+    end
+  end
 end
