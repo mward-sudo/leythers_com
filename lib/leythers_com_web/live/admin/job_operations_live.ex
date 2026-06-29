@@ -342,7 +342,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
                   <div class="rounded-lg border border-base-300 bg-base-100 px-3 py-2.5 text-sm">
                     <p class="font-medium text-base-content">{source.title}</p>
                     <p class="mt-0.5 text-xs text-base-content/60">
-                      Ingested {format_datetime(source.ingested_at)}
+                      Added {format_datetime(source.inserted_at)}
                     </p>
                   </div>
                 <% end %>

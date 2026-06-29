@@ -560,13 +560,13 @@ defmodule LeythersCom.Intelligence do
   def pending_editorial_sources(limit \\ 50) do
     from(source in "raw_sources",
       where: source.status == "pending",
-      order_by: [asc: source.ingested_at],
+      order_by: [asc: source.inserted_at],
       limit: ^limit,
       select: %{
         id: source.id,
         title: source.title,
-        publication_date: source.publication_date,
-        ingested_at: source.ingested_at
+        external_published_at: source.external_published_at,
+        inserted_at: source.inserted_at
       }
     )
     |> Repo.all()
