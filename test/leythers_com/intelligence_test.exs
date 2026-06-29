@@ -1,8 +1,11 @@
 defmodule LeythersCom.IntelligenceTest do
   use LeythersCom.DataCase, async: true
 
+  import Ecto.Query
+
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.CostLedger
+  alias Oban.Job
 
   describe "upsert_cost_ledger/1" do
     test "inserts a new ledger row for a date" do
@@ -187,10 +190,23 @@ defmodule LeythersCom.IntelligenceTest do
 
   describe "ensure_generation_allowed!/2" do
     test "returns ok when generation is allowed" do
+      attach_telemetry_handler([:leythers_com, :intelligence, :generation_budget, :check, :stop])
+
       assert :ok = Intelligence.ensure_generation_allowed!(~D[2026-06-01])
+
+      assert_receive {:telemetry_event,
+                      [:leythers_com, :intelligence, :generation_budget, :check, :stop],
+                      measurements, metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :ok
+      assert metadata.budget_state == :under_budget
     end
 
     test "returns an over_budget error when generation is blocked" do
+      attach_telemetry_handler([:leythers_com, :intelligence, :generation_budget, :check, :stop])
+
       {:ok, _} =
         Intelligence.upsert_cost_ledger(%{
           date: ~D[2026-06-13],
@@ -200,6 +216,15 @@ defmodule LeythersCom.IntelligenceTest do
         })
 
       assert {:error, :over_budget} = Intelligence.ensure_generation_allowed!(~D[2026-06-01])
+
+      assert_receive {:telemetry_event,
+                      [:leythers_com, :intelligence, :generation_budget, :check, :stop],
+                      measurements, metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :error
+      assert metadata.budget_state == :over_budget
     end
   end
 
@@ -238,5 +263,91 @@ defmodule LeythersCom.IntelligenceTest do
     test "returns empty list for non-positive limits" do
       assert Intelligence.recent_cost_ledgers(0) == []
     end
+  end
+
+  describe "list_failed_jobs/1" do
+    test "returns retryable and discarded jobs" do
+      discarded_job = create_failed_oban_job("discarded")
+      retryable_job = create_failed_oban_job("retryable")
+
+      jobs = Intelligence.list_failed_jobs(25)
+      returned_ids = Enum.map(jobs, & &1.id)
+
+      assert discarded_job.id in returned_ids
+      assert retryable_job.id in returned_ids
+    end
+
+    test "returns empty list for non-positive limits" do
+      assert Intelligence.list_failed_jobs(0) == []
+    end
+  end
+
+  describe "retry_failed_job/1" do
+    test "retries a failed job" do
+      job = create_failed_oban_job("discarded")
+
+      assert :ok = Intelligence.retry_failed_job(job.id)
+    end
+
+    test "returns error for invalid job id" do
+      assert {:error, :invalid_job_id} = Intelligence.retry_failed_job("abc")
+    end
+
+    test "emits telemetry for retry attempts" do
+      job = create_failed_oban_job("discarded")
+      attach_telemetry_handler([:leythers_com, :intelligence, :dead_letter, :retry, :stop])
+
+      assert :ok = Intelligence.retry_failed_job(job.id)
+
+      assert_receive {:telemetry_event,
+                      [:leythers_com, :intelligence, :dead_letter, :retry, :stop], measurements,
+                      metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :ok
+      assert metadata.job_id == job.id
+    end
+  end
+
+  defp attach_telemetry_handler(event_name) do
+    handler_id = "intelligence-test-#{System.unique_integer([:positive, :monotonic])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        event_name,
+        fn event, measurements, metadata, test_pid ->
+          send(test_pid, {:telemetry_event, event, measurements, metadata})
+        end,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
+  end
+
+  defp create_failed_oban_job(state) when state in ["discarded", "retryable"] do
+    job =
+      Job.new(
+        %{"source" => "test"},
+        worker: "LeythersCom.Ingestion.FetchRawSourceWorker",
+        queue: :ingestion,
+        max_attempts: 5
+      )
+      |> LeythersCom.Repo.insert!()
+
+    now = DateTime.utc_now()
+
+    updates = [
+      state: state,
+      attempt: 5,
+      attempted_at: now,
+      discarded_at: if(state == "discarded", do: now, else: nil)
+    ]
+
+    from(j in Job, where: j.id == ^job.id)
+    |> LeythersCom.Repo.update_all(set: updates)
+
+    LeythersCom.Repo.get!(Job, job.id)
   end
 end

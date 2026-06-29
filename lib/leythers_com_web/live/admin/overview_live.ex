@@ -10,17 +10,51 @@ defmodule LeythersComWeb.Admin.OverviewLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    started_at = System.monotonic_time()
     today = Date.utc_today()
+    monthly_spend = Intelligence.monthly_spend(today)
+    monthly_cap = Intelligence.monthly_generation_cap()
+    budget_state = Intelligence.generation_budget_state(today)
+    recent_ledgers = Intelligence.recent_cost_ledgers(14)
+    recent_articles = Content.list_recent_articles_with_sources(10)
+    failed_jobs = Intelligence.list_failed_jobs(25)
+
+    :telemetry.execute(
+      [:leythers_com, :web, :admin_overview, :mount, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      %{
+        result: :ok,
+        budget_state: budget_state,
+        ledger_count: length(recent_ledgers),
+        article_count: length(recent_articles),
+        failed_job_count: length(failed_jobs)
+      }
+    )
 
     {:ok,
      socket
      |> assign(:page_title, "Admin Overview")
      |> assign(:today, today)
-     |> assign(:monthly_spend, Intelligence.monthly_spend(today))
-     |> assign(:monthly_cap, Intelligence.monthly_generation_cap())
-     |> assign(:budget_state, Intelligence.generation_budget_state(today))
-     |> assign(:recent_ledgers, Intelligence.recent_cost_ledgers(14))
-     |> assign(:recent_articles, Content.list_recent_articles_with_sources(10))}
+     |> assign(:monthly_spend, monthly_spend)
+     |> assign(:monthly_cap, monthly_cap)
+     |> assign(:budget_state, budget_state)
+     |> assign(:recent_ledgers, recent_ledgers)
+     |> assign(:recent_articles, recent_articles)
+     |> assign(:failed_jobs, failed_jobs)}
+  end
+
+  @impl true
+  def handle_event("retry-job", %{"id" => id}, socket) do
+    with {job_id, ""} <- Integer.parse(id),
+         :ok <- Intelligence.retry_failed_job(job_id) do
+      {:noreply,
+       socket
+       |> put_flash(:info, "Queued job ##{job_id} for retry")
+       |> assign(:failed_jobs, Intelligence.list_failed_jobs(25))}
+    else
+      _error ->
+        {:noreply, put_flash(socket, :error, "Unable to retry that job")}
+    end
   end
 
   @impl true
@@ -138,6 +172,52 @@ defmodule LeythersComWeb.Admin.OverviewLive do
             </div>
           </section>
         </div>
+
+        <section
+          class="mt-6 rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm"
+          id="dead-letter-jobs"
+        >
+          <h2 class="text-lg font-semibold">Failed Jobs (Dead Letter)</h2>
+          <p class="mt-1 text-sm text-base-content/70">
+            Review discarded or retryable jobs and manually queue a retry.
+          </p>
+
+          <div class="mt-4 overflow-x-auto">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>State</th>
+                  <th>Queue</th>
+                  <th>Worker</th>
+                  <th>Attempts</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                <%= for job <- @failed_jobs do %>
+                  <tr id={"failed-job-#{job.id}"}>
+                    <td>#{job.id}</td>
+                    <td>{job.state}</td>
+                    <td>{job.queue}</td>
+                    <td class="max-w-80 truncate">{job.worker}</td>
+                    <td>{job.attempt}/{job.max_attempts}</td>
+                    <td>
+                      <button
+                        type="button"
+                        class="btn btn-xs btn-outline"
+                        phx-click="retry-job"
+                        phx-value-id={job.id}
+                      >
+                        Retry
+                      </button>
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </Layouts.app>
     """

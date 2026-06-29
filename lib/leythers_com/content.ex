@@ -24,9 +24,11 @@ defmodule LeythersCom.Content do
   end
 
   def publish_article(attrs, source_ids \\ []) do
+    started_at = System.monotonic_time()
     title = fetch_attr(attrs, :title) || ""
     body = fetch_attr(attrs, :body)
     {:ok, slug} = Slug.unique_for_title(title)
+    source_count = source_ids |> Enum.reject(&blank?/1) |> length()
 
     article_attrs = %{
       title: title,
@@ -47,10 +49,14 @@ defmodule LeythersCom.Content do
         end
       end)
 
-    case transaction_result do
-      {:ok, article} -> {:ok, article}
-      {:error, reason} -> {:error, reason}
-    end
+    result =
+      case transaction_result do
+        {:ok, article} -> {:ok, article}
+        {:error, reason} -> {:error, reason}
+      end
+
+    emit_manual_publish_telemetry(result, started_at, source_count)
+    result
   end
 
   def get_article!(id), do: Repo.get!(PermanentArticle, id)
@@ -73,6 +79,7 @@ defmodule LeythersCom.Content do
   def list_recent_articles_with_sources(limit \\ 10)
 
   def list_recent_articles_with_sources(limit) when is_integer(limit) and limit > 0 do
+    started_at = System.monotonic_time()
     import Ecto.Query
 
     articles =
@@ -81,21 +88,45 @@ defmodule LeythersCom.Content do
       |> limit(^limit)
       |> Repo.all()
 
-    Enum.map(articles, fn article ->
-      %{article: article, sources: list_sources_for_article(article.id)}
-    end)
+    entries =
+      Enum.map(articles, fn article ->
+        %{article: article, sources: list_sources_for_article(article.id)}
+      end)
+
+    :telemetry.execute(
+      [:leythers_com, :content, :provenance_history, :query, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      %{result: :ok, article_count: length(entries)}
+    )
+
+    entries
   end
 
-  def list_recent_articles_with_sources(_limit), do: []
+  def list_recent_articles_with_sources(_limit) do
+    :telemetry.execute(
+      [:leythers_com, :content, :provenance_history, :query, :stop],
+      %{duration: 0, count: 1},
+      %{result: :invalid_limit, article_count: 0}
+    )
+
+    []
+  end
 
   def delete_smoke_test_articles do
     delete_articles_by_slug_prefix("smoke-test-")
   end
 
   def delete_articles_by_slug_prefix(prefix) when is_binary(prefix) do
+    started_at = System.monotonic_time()
     trimmed_prefix = String.trim(prefix)
 
     if trimmed_prefix == "" do
+      :telemetry.execute(
+        [:leythers_com, :content, :cleanup, :stop],
+        %{duration: System.monotonic_time() - started_at, count: 1},
+        %{result: :error, deleted_count: 0}
+      )
+
       {:error, :invalid_prefix}
     else
       import Ecto.Query
@@ -105,6 +136,13 @@ defmodule LeythersCom.Content do
           where: like(article.slug, ^"#{trimmed_prefix}%")
 
       {deleted_count, _} = Repo.delete_all(query)
+
+      :telemetry.execute(
+        [:leythers_com, :content, :cleanup, :stop],
+        %{duration: System.monotonic_time() - started_at, count: 1},
+        %{result: :ok, deleted_count: deleted_count}
+      )
+
       {:ok, deleted_count}
     end
   end
@@ -188,6 +226,23 @@ defmodule LeythersCom.Content do
       }
     )
     |> Repo.all()
+  end
+
+  defp emit_manual_publish_telemetry(result, started_at, source_count) do
+    metadata =
+      case result do
+        {:ok, article} ->
+          %{result: :ok, article_id: article.id, source_count: source_count}
+
+        {:error, _reason} ->
+          %{result: :error, source_count: source_count}
+      end
+
+    :telemetry.execute(
+      [:leythers_com, :content, :manual_publish, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      metadata
+    )
   end
 
   defp blank?(value), do: value in [nil, ""]

@@ -75,6 +75,50 @@ defmodule LeythersComWeb.Telemetry do
           "The time the connection spent waiting before being checked out for the query"
       ),
 
+      # Domain Metrics
+      summary("leythers_com.content.manual_publish.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.content.manual_publish.stop.count", tags: [:result]),
+      summary("leythers_com.content.cleanup.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.content.cleanup.stop.count", tags: [:result]),
+      summary("leythers_com.content.provenance_history.query.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.content.provenance_history.query.stop.count", tags: [:result]),
+      summary("leythers_com.intelligence.cost_ledger.upsert.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.intelligence.cost_ledger.upsert.stop.count", tags: [:result]),
+      summary("leythers_com.intelligence.generation_budget.check.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result, :budget_state]
+      ),
+      sum("leythers_com.intelligence.generation_budget.check.stop.count",
+        tags: [:result, :budget_state]
+      ),
+      summary("leythers_com.intelligence.dead_letter.query.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.intelligence.dead_letter.query.stop.count", tags: [:result]),
+      summary("leythers_com.intelligence.dead_letter.retry.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result]
+      ),
+      sum("leythers_com.intelligence.dead_letter.retry.stop.count", tags: [:result]),
+      summary("leythers_com.web.admin_overview.mount.stop.duration",
+        unit: {:native, :millisecond},
+        tags: [:result, :budget_state]
+      ),
+      sum("leythers_com.web.admin_overview.mount.stop.count", tags: [:result, :budget_state]),
+
       # VM Metrics
       summary("vm.memory.total", unit: {:byte, :kilobyte}),
       summary("vm.total_run_queue_lengths.total"),

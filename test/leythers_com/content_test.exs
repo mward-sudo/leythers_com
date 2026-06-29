@@ -138,6 +138,39 @@ defmodule LeythersCom.ContentTest do
 
       assert article.slug == "collision-safe-title-2"
     end
+
+    test "emits telemetry for successful manual publish" do
+      attach_telemetry_handler([:leythers_com, :content, :manual_publish, :stop])
+
+      assert {:ok, %PermanentArticle{} = article} =
+               Content.publish_article(%{
+                 title: "Telemetry Publish",
+                 body: "Telemetry body"
+               })
+
+      assert_receive {:telemetry_event, [:leythers_com, :content, :manual_publish, :stop],
+                      measurements, metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :ok
+      assert metadata.article_id == article.id
+      assert metadata.source_count == 0
+    end
+
+    test "emits telemetry for failed manual publish" do
+      attach_telemetry_handler([:leythers_com, :content, :manual_publish, :stop])
+
+      assert {:error, _changeset} = Content.publish_article(%{title: "", body: ""})
+
+      assert_receive {:telemetry_event, [:leythers_com, :content, :manual_publish, :stop],
+                      measurements, metadata}
+
+      assert measurements.duration > 0
+      assert measurements.count == 1
+      assert metadata.result == :error
+      refute Map.has_key?(metadata, :article_id)
+    end
   end
 
   describe "update_article/2" do
@@ -206,6 +239,20 @@ defmodule LeythersCom.ContentTest do
     test "returns error for blank prefix" do
       assert {:error, :invalid_prefix} = Content.delete_articles_by_slug_prefix("   ")
     end
+
+    test "emits telemetry for cleanup attempts" do
+      attach_telemetry_handler([:leythers_com, :content, :cleanup, :stop])
+
+      assert {:error, :invalid_prefix} = Content.delete_articles_by_slug_prefix("   ")
+
+      assert_receive {:telemetry_event, [:leythers_com, :content, :cleanup, :stop], measurements,
+                      metadata}
+
+      assert measurements.duration >= 0
+      assert measurements.count == 1
+      assert metadata.result == :error
+      assert metadata.deleted_count == 0
+    end
   end
 
   describe "delete_smoke_test_articles/0" do
@@ -269,5 +316,21 @@ defmodule LeythersCom.ContentTest do
     ArticleSource
     |> where([article_source], article_source.permanent_article_id == ^article_id)
     |> Repo.aggregate(:count, :id)
+  end
+
+  defp attach_telemetry_handler(event_name) do
+    handler_id = "content-test-#{System.unique_integer([:positive, :monotonic])}"
+
+    :ok =
+      :telemetry.attach(
+        handler_id,
+        event_name,
+        fn event, measurements, metadata, test_pid ->
+          send(test_pid, {:telemetry_event, event, measurements, metadata})
+        end,
+        self()
+      )
+
+    on_exit(fn -> :telemetry.detach(handler_id) end)
   end
 end
