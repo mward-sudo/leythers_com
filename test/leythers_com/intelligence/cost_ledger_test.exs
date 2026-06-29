@@ -1,6 +1,7 @@
 defmodule LeythersCom.Intelligence.CostLedgerTest do
   use LeythersCom.DataCase, async: true
 
+  alias Ecto.Changeset
   alias LeythersCom.Intelligence.CostLedger
 
   @valid_attrs %{
@@ -9,7 +10,7 @@ defmodule LeythersCom.Intelligence.CostLedgerTest do
 
   describe "changeset/2 with valid attributes" do
     test "returns a valid changeset" do
-      assert %Ecto.Changeset{valid?: true} = CostLedger.changeset(%CostLedger{}, @valid_attrs)
+      assert %Changeset{valid?: true} = CostLedger.changeset(%CostLedger{}, @valid_attrs)
     end
 
     test "accepts explicit token and cost values" do
@@ -20,7 +21,7 @@ defmodule LeythersCom.Intelligence.CostLedgerTest do
           estimated_cost_gbp: Decimal.new("0.003000")
         })
 
-      assert %Ecto.Changeset{valid?: true} = CostLedger.changeset(%CostLedger{}, attrs)
+      assert %Changeset{valid?: true} = CostLedger.changeset(%CostLedger{}, attrs)
     end
   end
 

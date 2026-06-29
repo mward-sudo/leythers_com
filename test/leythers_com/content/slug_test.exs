@@ -1,6 +1,7 @@
 defmodule LeythersCom.Content.SlugTest do
   use LeythersCom.DataCase, async: true
 
+  alias LeythersCom.Content
   alias LeythersCom.Content.Slug
 
   describe "generate/1" do
@@ -29,7 +30,7 @@ defmodule LeythersCom.Content.SlugTest do
 
     test "appends -2 suffix on first collision" do
       {:ok, _} =
-        LeythersCom.Content.create_article(%{
+        Content.create_article(%{
           slug: "collision-test",
           title: "Collision Test",
           body: "body"
@@ -41,7 +42,7 @@ defmodule LeythersCom.Content.SlugTest do
 
     test "appends incrementing suffix on further collisions" do
       for suffix <- ["collision-series", "collision-series-2"] do
-        LeythersCom.Content.create_article(%{
+        Content.create_article(%{
           slug: suffix,
           title: "unused",
           body: "body"

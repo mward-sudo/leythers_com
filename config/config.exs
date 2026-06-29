@@ -63,6 +63,9 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+# Configure intelligence budget guardrails
+config :leythers_com, :intelligence_budget, monthly_cap_gbp: "10.00"
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
@@ -73,7 +76,10 @@ config :leythers_com, Oban,
   queues: [default: 10, ingestion: 5, intelligence: 2]
 
 # Configure Quantum scheduler
-config :leythers_com, LeythersCom.Scheduler, jobs: []
+config :leythers_com, LeythersCom.Scheduler,
+  jobs: [
+    {"@daily", {LeythersCom.Ingestion.SourceLinkHealthChecker, :check_all_raw_sources, []}}
+  ]
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

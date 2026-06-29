@@ -40,6 +40,7 @@ defmodule LeythersCom.Content.Slug do
   end
 
   defp taken?(slug) do
-    Repo.exists?(from a in PermanentArticle, where: a.slug == ^slug)
+    query = from a in PermanentArticle, where: a.slug == ^slug
+    Repo.exists?(query)
   end
 end
