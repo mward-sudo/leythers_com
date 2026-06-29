@@ -85,6 +85,15 @@ config :leythers_com, :voice_profile,
   rumour_notice: "Rumour mill warning: treat this as chatter until confirmed.",
   fan_signoff: "Terrace verdict: proper Leythers chaos, and we love it."
 
+# Configure LLM provider defaults for local low-cost testing
+config :leythers_com, :llm,
+  adapter: LeythersCom.Intelligence.LLMClient.Ollama,
+  endpoint: "http://127.0.0.1:11434",
+  model: "qwen3:1.7b",
+  temperature: 0.4,
+  num_predict: 600,
+  timeout_ms: 30_000
+
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 

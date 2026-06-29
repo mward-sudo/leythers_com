@@ -161,7 +161,11 @@ defmodule LeythersCom.ContentTest do
     test "emits telemetry for failed manual publish" do
       attach_telemetry_handler([:leythers_com, :content, :manual_publish, :stop])
 
-      assert {:error, _changeset} = Content.publish_article(%{title: "", body: ""})
+      assert {:error, _changeset} =
+               Content.publish_article(
+                 %{title: "", body: ""},
+                 [UUID.generate(), UUID.generate(), UUID.generate(), UUID.generate()]
+               )
 
       assert_receive {:telemetry_event, [:leythers_com, :content, :manual_publish, :stop],
                       measurements, metadata}
@@ -169,6 +173,7 @@ defmodule LeythersCom.ContentTest do
       assert measurements.duration > 0
       assert measurements.count == 1
       assert metadata.result == :error
+      assert metadata.source_count == 4
       refute Map.has_key?(metadata, :article_id)
     end
   end

@@ -34,12 +34,24 @@ Recommended environment variables:
 10. `OBAN_QUEUE_INGESTION` (default: `2`)
 11. `OBAN_QUEUE_INTELLIGENCE` (default: `1`)
 12. `OBAN_PRUNER_MAX_AGE_SECONDS` (default: `604800`)
+13. `LLM_API_ENDPOINT` (default: `http://127.0.0.1:11434`)
+14. `LLM_MODEL` (default: `qwen3:1.7b`)
+15. `LLM_TEMPERATURE` (default: `0.4`)
+16. `LLM_NUM_PREDICT` (default: `600`)
+17. `LLM_TIMEOUT_MS` (default: `30000`)
 
 Notes:
 
 1. Keep queue concurrency conservative on serverless Postgres to avoid exhausting connection limits.
 2. Tune `POOL_SIZE` together with Oban queue concurrency. Start low, then scale based on observed throughput.
 3. Use separate credentials for runtime and migrations when your provider enforces restricted roles.
+
+Local Ollama testing:
+
+1. Start Ollama locally.
+2. Pull and run the default model:
+	- `ollama pull qwen3:1.7b`
+3. Keep `LLM_API_ENDPOINT=http://127.0.0.1:11434` for cost-free local evaluation.
 
 Health checks:
 

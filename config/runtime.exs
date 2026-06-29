@@ -39,6 +39,13 @@ if config_env() == :prod do
     end
   end
 
+  env_float = fn key, default ->
+    case System.get_env(key) do
+      nil -> default
+      value -> String.to_float(value)
+    end
+  end
+
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """
@@ -74,6 +81,14 @@ if config_env() == :prod do
       ingestion: env_int.("OBAN_QUEUE_INGESTION", 2),
       intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 1)
     ]
+
+  config :leythers_com, :llm,
+    adapter: LeythersCom.Intelligence.LLMClient.Ollama,
+    endpoint: System.get_env("LLM_API_ENDPOINT") || "http://127.0.0.1:11434",
+    model: System.get_env("LLM_MODEL") || "qwen3:1.7b",
+    temperature: env_float.("LLM_TEMPERATURE", 0.4),
+    num_predict: env_int.("LLM_NUM_PREDICT", 600),
+    timeout_ms: env_int.("LLM_TIMEOUT_MS", 30_000)
 
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
