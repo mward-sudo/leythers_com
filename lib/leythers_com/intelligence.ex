@@ -8,6 +8,8 @@ defmodule LeythersCom.Intelligence do
   alias LeythersCom.Intelligence.CostLedger
   alias LeythersCom.Repo
 
+  @budget_config_key :intelligence_budget
+
   def upsert_cost_ledger(%{date: date} = attrs) when not is_nil(date) do
     changeset = CostLedger.changeset(%CostLedger{}, attrs)
 
@@ -56,4 +58,82 @@ defmodule LeythersCom.Intelligence do
 
     result || Decimal.new("0")
   end
+
+  def monthly_budget_state(%Date{} = date, monthly_budget_gbp) do
+    monthly_spend = monthly_spend(date)
+    monthly_budget = to_decimal(monthly_budget_gbp)
+    warning_threshold = Decimal.mult(monthly_budget, Decimal.new("0.8"))
+
+    cond do
+      Decimal.compare(monthly_spend, monthly_budget) != :lt ->
+        :over_budget
+
+      Decimal.compare(monthly_spend, warning_threshold) != :lt ->
+        :near_budget
+
+      true ->
+        :under_budget
+    end
+  end
+
+  def monthly_generation_cap do
+    @budget_config_key
+    |> Application.get_env(:leythers_com, [])
+    |> Keyword.get(:monthly_cap_gbp, "10.00")
+    |> to_decimal()
+  end
+
+  def generation_budget_state(%Date{} = date, override \\ nil) do
+    date
+    |> effective_monthly_cap(override)
+    |> then(&monthly_budget_state(date, &1))
+  end
+
+  def generation_allowed?(%Date{} = date, override \\ nil) do
+    generation_budget_state(date, override) != :over_budget
+  end
+
+  def ensure_generation_allowed!(%Date{} = date, override \\ nil) do
+    if generation_allowed?(date, override) do
+      :ok
+    else
+      {:error, :over_budget}
+    end
+  end
+
+  def effective_monthly_cap(%Date{} = _date, nil), do: monthly_generation_cap()
+
+  def effective_monthly_cap(%Date{} = date, override) when is_map(override) do
+    default_cap = monthly_generation_cap()
+
+    override_cap =
+      Map.get(override, :monthly_cap_gbp) || Map.get(override, "monthly_cap_gbp")
+
+    expires_on = Map.get(override, :expires_on) || Map.get(override, "expires_on")
+
+    cond do
+      is_nil(override_cap) or is_nil(expires_on) ->
+        default_cap
+
+      not match?(%Date{}, expires_on) ->
+        default_cap
+
+      Date.end_of_month(date) != expires_on ->
+        default_cap
+
+      true ->
+        override_cap = to_decimal(override_cap)
+
+        if Decimal.compare(override_cap, default_cap) != :gt do
+          default_cap
+        else
+          override_cap
+        end
+    end
+  end
+
+  defp to_decimal(%Decimal{} = decimal), do: decimal
+  defp to_decimal(value) when is_integer(value), do: Decimal.new(value)
+  defp to_decimal(value) when is_float(value), do: Decimal.from_float(value)
+  defp to_decimal(value) when is_binary(value), do: Decimal.new(value)
 end
