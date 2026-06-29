@@ -23,6 +23,12 @@ defmodule LeythersComWeb.Router do
     get "/", PageController, :home
   end
 
+  scope "/", LeythersComWeb do
+    pipe_through :api
+
+    get "/health", HealthController, :show
+  end
+
   # Other scopes may use custom stacks.
   # scope "/api", LeythersComWeb do
   #   pipe_through :api

@@ -41,6 +41,26 @@ Notes:
 2. Tune `POOL_SIZE` together with Oban queue concurrency. Start low, then scale based on observed throughput.
 3. Use separate credentials for runtime and migrations when your provider enforces restricted roles.
 
+Health checks:
+
+1. `GET /health` returns `200` with JSON when web and database are healthy.
+2. The endpoint returns `503` when the database check fails.
+3. In production config, `force_ssl` excludes `/health` so HTTP-only platform probes can still succeed.
+
+Deployment runbook:
+
+1. Build assets and release:
+	- `mix assets.deploy`
+	- `MIX_ENV=prod mix release`
+2. Run migrations before cutting traffic:
+	- `MIX_ENV=prod mix ecto.migrate`
+3. Start the release with `PHX_SERVER=true`.
+4. Verify runtime readiness:
+	- `curl -i https://<your-host>/health`
+5. Verify authenticated admin access and background processing:
+	- log in as admin and open `/admin/overview`
+	- confirm telemetry widgets and failed job panel load successfully
+
 ## Learn more
 
 * Official website: https://www.phoenixframework.org/
