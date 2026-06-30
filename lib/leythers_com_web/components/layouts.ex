@@ -43,7 +43,9 @@ defmodule LeythersComWeb.Layouts do
           <a href="/" class="inline-flex items-center gap-3">
             <img src={~p"/images/logo.svg"} width="36" />
             <div>
-              <p class="text-xs font-semibold uppercase tracking-[0.22em] text-primary">Leythers.com</p>
+              <p class="text-xs font-semibold uppercase tracking-[0.22em] text-primary">
+                Leythers.com
+              </p>
               <p class="text-sm font-medium text-base-content/70">Admin and account workspace</p>
             </div>
           </a>
@@ -67,7 +69,7 @@ defmodule LeythersComWeb.Layouts do
 
       <main class="relative px-4 py-8 sm:px-6 lg:px-8">
         <div class="mx-auto w-full max-w-7xl space-y-4">
-        {render_slot(@inner_block)}
+          {render_slot(@inner_block)}
         </div>
       </main>
     </div>

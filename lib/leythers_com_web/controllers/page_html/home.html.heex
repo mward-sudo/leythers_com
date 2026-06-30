@@ -74,7 +74,12 @@
             <% else %>
               <ul class="mt-2 space-y-1">
                 <li :for={source <- Enum.take(entry.sources, 2)}>
-                  <a href={source.url} target="_blank" rel="noopener noreferrer" class="link link-hover">
+                  <a
+                    href={source.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="link link-hover"
+                  >
                     {source.title}
                   </a>
                 </li>

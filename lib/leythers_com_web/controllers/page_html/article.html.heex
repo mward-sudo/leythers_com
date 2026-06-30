@@ -13,7 +13,10 @@
         <div class="mt-3 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-[0.12em]">
           <span class="badge badge-outline">{@article.author_type}</span>
           <span class="badge badge-outline">v{@article.version}</span>
-          <span :if={String.starts_with?(String.downcase(@article.title), "rumour:")} class="badge badge-warning">
+          <span
+            :if={String.starts_with?(String.downcase(@article.title), "rumour:")}
+            class="badge badge-warning"
+          >
             Rumour
           </span>
         </div>
@@ -26,7 +29,10 @@
       </div>
     </article>
 
-    <section class="mt-6 rounded-3xl border border-base-300 bg-base-100 p-6 shadow-sm sm:p-8" id="article-sources">
+    <section
+      class="mt-6 rounded-3xl border border-base-300 bg-base-100 p-6 shadow-sm sm:p-8"
+      id="article-sources"
+    >
       <h2 class="text-lg font-bold">Source links</h2>
 
       <%= if @sources == [] do %>
@@ -34,7 +40,12 @@
       <% else %>
         <ul class="mt-4 space-y-3">
           <li :for={source <- @sources} id={"source-link-#{source.id}"}>
-            <a href={source.url} target="_blank" rel="noopener noreferrer" class="link link-hover text-base font-semibold">
+            <a
+              href={source.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="link link-hover text-base font-semibold"
+            >
               {source.title}
             </a>
             <p class="mt-1 text-xs text-base-content/60">
