@@ -572,6 +572,36 @@ defmodule LeythersCom.Intelligence do
     |> Repo.all()
   end
 
+  def job_operations_progress_snapshot do
+    running_jobs =
+      from(job in "oban_jobs",
+        where: job.state == "executing",
+        select: count(job.id)
+      )
+      |> Repo.one()
+
+    queued_jobs =
+      from(job in "oban_jobs",
+        where: job.state in ["available", "scheduled", "retryable"],
+        select: count(job.id)
+      )
+      |> Repo.one()
+
+    pending_sources =
+      from(source in "raw_sources",
+        where: source.status == "pending",
+        select: count(source.id)
+      )
+      |> Repo.one()
+
+    %{
+      running_jobs: running_jobs || 0,
+      queued_jobs: queued_jobs || 0,
+      pending_sources: pending_sources || 0,
+      left_to_run: (queued_jobs || 0) + (pending_sources || 0)
+    }
+  end
+
   def list_executing_jobs_as_processes do
     # Fetch currently executing Oban jobs, excluding those that have already created completed events
     executing_job_ids =

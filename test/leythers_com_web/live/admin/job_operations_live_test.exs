@@ -35,6 +35,39 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert html =~ "Ingestion runs and editorial reviews will appear here"
     end
 
+    test "shows running and left-to-run progress counters", %{conn: conn} do
+      _running_job =
+        create_job(
+          "executing",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      _queued_job =
+        create_job(
+          "available",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      {:ok, _pending_source} =
+        Ingestion.create_raw_source(%{
+          title: "Pending Source",
+          url: "https://example.com/pending-source",
+          origin_provider: "job_progress_test",
+          external_published_at: DateTime.utc_now()
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/admin/jobs")
+
+      assert html =~ "Running now"
+      assert html =~ ">1<"
+      assert html =~ "Left to run"
+      assert html =~ ">2<"
+      assert html =~ "Queued jobs"
+      assert html =~ "Pending sources"
+    end
+
     test "displays processes with their events", %{conn: conn} do
       process_run_id = Ecto.UUID.generate()
 
@@ -68,7 +101,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
           change_details: %{outcome: "created"}
         })
 
-      {:ok, view, html} = live(conn, ~p"/admin/jobs")
+      {:ok, _view, html} = live(conn, ~p"/admin/jobs")
 
       assert html =~ "Editorial Review:"
       assert html =~ "sources"
@@ -202,7 +235,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
           change_details: %{inserted: 1, seen: 0, errors: 0}
         })
 
-      {:ok, view, html} = live(conn, ~p"/admin/jobs")
+      {:ok, _view, html} = live(conn, ~p"/admin/jobs")
 
       assert html =~ "RSS Feed Ingestion"
       assert html =~ "Feed Ingestion"

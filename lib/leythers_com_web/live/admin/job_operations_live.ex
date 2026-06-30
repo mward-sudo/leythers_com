@@ -28,6 +28,12 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
      |> assign(:expanded_process_id, nil)
      |> assign(:process_events, [])
      |> assign(:pending_sources, [])
+     |> assign(:progress_snapshot, %{
+       running_jobs: 0,
+       queued_jobs: 0,
+       pending_sources: 0,
+       left_to_run: 0
+     })
      |> assign(:selected_event_id, nil)
      |> assign(:selected_event, nil)}
   end
@@ -70,6 +76,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
         nil
       end
 
+    progress_snapshot = Intelligence.job_operations_progress_snapshot()
+
     query_params =
       params
       |> Map.take(["page", "process_id", "event_id"])
@@ -82,6 +90,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     |> assign(:expanded_process_id, expanded_process_id)
     |> assign(:process_events, process_events)
     |> assign(:pending_sources, pending_sources)
+    |> assign(:progress_snapshot, progress_snapshot)
     |> assign(:selected_event_id, selected_event_id)
     |> assign(:selected_event, selected_event)
   end
@@ -163,6 +172,35 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
             <.link navigate={~p"/admin/articles/new"} class="btn btn-primary btn-soft btn-sm">
               <.icon name="hero-plus" class="h-4 w-4" /> Publish
             </.link>
+          </div>
+        </div>
+
+        <div id="job-progress-summary" class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
+              Running now
+            </p>
+            <p class="mt-1 text-2xl font-bold text-base-content">{@progress_snapshot.running_jobs}</p>
+          </div>
+          <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
+              Left to run
+            </p>
+            <p class="mt-1 text-2xl font-bold text-base-content">{@progress_snapshot.left_to_run}</p>
+          </div>
+          <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
+              Queued jobs
+            </p>
+            <p class="mt-1 text-2xl font-bold text-base-content">{@progress_snapshot.queued_jobs}</p>
+          </div>
+          <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
+              Pending sources
+            </p>
+            <p class="mt-1 text-2xl font-bold text-base-content">
+              {@progress_snapshot.pending_sources}
+            </p>
           </div>
         </div>
 
