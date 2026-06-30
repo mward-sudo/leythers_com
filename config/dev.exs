@@ -91,3 +91,11 @@ config :phoenix_live_view,
 
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
+
+# Keep editorial processing practical in development: avoid extra LLM grouping
+# calls and keep each worker run bounded for faster visible progress.
+config :leythers_com, :intelligence_generation,
+  llm_grouping_enabled: false,
+  grouping_llm_timeout_ms: 30_000,
+  source_batch_size: 8,
+  max_batches_per_run: 8

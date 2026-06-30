@@ -402,10 +402,18 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp article_summary(cluster_sources) do
     cluster_sources
     |> Enum.map_join("\n", fn source ->
-      summary = source.body_summary |> sanitize_plain_text()
+      summary = source.body_summary |> sanitize_plain_text() |> truncate_for_prompt(280)
       "- #{source.origin_provider}: #{summary}"
     end)
     |> then(&"Automated feed digest:\n\n#{&1}")
+  end
+
+  defp truncate_for_prompt(text, max_len) when is_binary(text) and is_integer(max_len) do
+    if String.length(text) <= max_len do
+      text
+    else
+      String.slice(text, 0, max_len) <> "..."
+    end
   end
 
   defp sanitize_plain_text(summary) when is_binary(summary) do
