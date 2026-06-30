@@ -13,11 +13,13 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   @default_page 1
   @per_page 20
+  @refresh_interval_ms 1_000
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(LeythersCom.PubSub, JobOperationsUpdates.topic())
+      schedule_refresh()
     end
 
     {:ok,
@@ -45,6 +47,12 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   @impl true
   def handle_info({:job_operations, :updated}, socket) do
+    {:noreply, load_page(socket, socket.assigns.query_params)}
+  end
+
+  @impl true
+  def handle_info(:refresh, socket) do
+    schedule_refresh()
     {:noreply, load_page(socket, socket.assigns.query_params)}
   end
 
@@ -93,6 +101,10 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     |> assign(:progress_snapshot, progress_snapshot)
     |> assign(:selected_event_id, selected_event_id)
     |> assign(:selected_event, selected_event)
+  end
+
+  defp schedule_refresh do
+    Process.send_after(self(), :refresh, @refresh_interval_ms)
   end
 
   @impl true
