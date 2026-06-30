@@ -103,7 +103,7 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
         |> Repo.all()
         |> Enum.map(fn entry ->
           entry
-          |> Map.put(:sources, List.duplicate(%{}, entry.source_count))
+          |> Map.put(:sources, Content.list_sources_for_article(entry.article.id))
           |> Map.delete(:source_count)
         end)
     end

@@ -21,6 +21,7 @@ defmodule LeythersComWeb.Router do
     pipe_through :browser
 
     get "/", PageController, :home
+    get "/articles/:slug", PageController, :article
   end
 
   scope "/", LeythersComWeb do

@@ -112,6 +112,12 @@ defmodule LeythersCom.Content do
     end
   end
 
+  def get_article_with_sources_by_slug(slug) do
+    with {:ok, article} <- get_article_by_slug(slug) do
+      {:ok, %{article: article, sources: list_sources_for_article(article.id)}}
+    end
+  end
+
   def list_articles(opts \\ []) do
     import Ecto.Query
 
@@ -155,6 +161,28 @@ defmodule LeythersCom.Content do
 
     []
   end
+
+  def list_sources_for_article(article_id) when is_binary(article_id) do
+    import Ecto.Query
+
+    from(article_source in ArticleSource,
+      join: raw_source in RawSource,
+      on: article_source.raw_source_id == raw_source.id,
+      where: article_source.permanent_article_id == ^article_id,
+      order_by: [asc: raw_source.inserted_at],
+      select: %{
+        id: raw_source.id,
+        title: raw_source.title,
+        url: raw_source.url,
+        origin_provider: raw_source.origin_provider,
+        last_check_status: raw_source.last_check_status,
+        external_published_at: raw_source.external_published_at
+      }
+    )
+    |> Repo.all()
+  end
+
+  def list_sources_for_article(_article_id), do: []
 
   def delete_smoke_test_articles do
     delete_articles_by_slug_prefix("smoke-test-")
@@ -345,26 +373,6 @@ defmodule LeythersCom.Content do
         |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
         |> Map.put("version", next_version)
     end
-  end
-
-  defp list_sources_for_article(article_id) do
-    import Ecto.Query
-
-    from(article_source in ArticleSource,
-      join: raw_source in RawSource,
-      on: article_source.raw_source_id == raw_source.id,
-      where: article_source.permanent_article_id == ^article_id,
-      order_by: [asc: raw_source.inserted_at],
-      select: %{
-        id: raw_source.id,
-        title: raw_source.title,
-        url: raw_source.url,
-        origin_provider: raw_source.origin_provider,
-        last_check_status: raw_source.last_check_status,
-        external_published_at: raw_source.external_published_at
-      }
-    )
-    |> Repo.all()
   end
 
   defp emit_manual_publish_telemetry(result, started_at, source_count) do

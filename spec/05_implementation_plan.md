@@ -59,6 +59,15 @@ Execution backlog (ordered):
 5. Add admin diagnostics dashboard after ingestion stability gates are met, focused on feed health,
    ranking runs, and fallback rates.
 
+Usability integration backlog (new):
+
+1. Enforce plain-text generated summaries in article output (no embedded HTML/markup unless an
+   explicit render-safe rich-text mode is introduced for a specific use case).
+2. Remove remaining Phoenix starter chrome from admin/auth surfaces and replace it with
+   Leythers-branded navigation and layout language.
+3. Unify visual/system integration across public, auth, and admin interfaces so transitions feel
+   like one product rather than separate shells.
+
 ## Phase A: Core Platform Baseline (Completed)
 
 Goals:
