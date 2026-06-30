@@ -94,6 +94,10 @@ if config_env() == :prod do
     num_predict: env_int.("LLM_NUM_PREDICT", 600),
     timeout_ms: env_int.("LLM_TIMEOUT_MS", 30_000)
 
+  config :leythers_com, :llm_guard,
+    failure_threshold: env_int.("LLM_GUARD_FAILURE_THRESHOLD", 4),
+    open_cooldown_ms: env_int.("LLM_GUARD_OPEN_COOLDOWN_MS", 30_000)
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want

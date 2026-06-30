@@ -98,10 +98,14 @@ config :leythers_com, :homepage_ranking,
   llm_enabled: true,
   llm_candidate_limit: 1,
   llm_cooldown_seconds: 1_800,
-  llm_timeout_ms: 2_500,
+  llm_timeout_ms: 12_000,
   recency_weight: 0.45,
   importance_weight: 0.55,
   max_age_hours: 72
+
+config :leythers_com, :llm_guard,
+  failure_threshold: 4,
+  open_cooldown_ms: 30_000
 
 config :leythers_com, :editorial_orchestration,
   source_limit: 20,
@@ -121,7 +125,7 @@ config :leythers_com, :intelligence_generation,
   llm_draft_enabled: true,
   llm_grouping_enabled: true,
   llm_grouping_min_jaccard: 0.0,
-  grouping_llm_timeout_ms: 1_200,
+  grouping_llm_timeout_ms: 10_000,
   llm_cost_per_1k_tokens_gbp: "0.000000"
 
 # Use Jason for JSON parsing in Phoenix

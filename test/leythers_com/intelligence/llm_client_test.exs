@@ -1,7 +1,14 @@
 defmodule LeythersCom.Intelligence.LLMClientTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias LeythersCom.Intelligence.LLMClient
+  alias LeythersCom.Intelligence.LLMGuard
+
+  setup do
+    LLMGuard.report_success()
+    _ = :sys.get_state(LLMGuard)
+    :ok
+  end
 
   defmodule FakeAdapter do
     @behaviour LeythersCom.Intelligence.LLMClient
@@ -9,6 +16,15 @@ defmodule LeythersCom.Intelligence.LLMClientTest do
     @impl true
     def generate(prompt, opts) do
       {:ok, %{text: "echo: " <> prompt, model: opts[:model] || "fake"}}
+    end
+  end
+
+  defmodule FailingAdapter do
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(_prompt, _opts) do
+      {:error, {:request_failed, 500, %{"error" => "upstream"}}}
     end
   end
 
@@ -30,5 +46,31 @@ defmodule LeythersCom.Intelligence.LLMClientTest do
 
     assert {:ok, %{text: "echo: test prompt", model: "override-model"}} =
              LLMClient.generate("test prompt", model: "override-model")
+  end
+
+  test "opens circuit after repeated transient failures" do
+    llm_original = Application.get_env(:leythers_com, :llm)
+    guard_original = Application.get_env(:leythers_com, :llm_guard)
+
+    on_exit(fn ->
+      if llm_original do
+        Application.put_env(:leythers_com, :llm, llm_original)
+      else
+        Application.delete_env(:leythers_com, :llm)
+      end
+
+      if guard_original do
+        Application.put_env(:leythers_com, :llm_guard, guard_original)
+      else
+        Application.delete_env(:leythers_com, :llm_guard)
+      end
+    end)
+
+    Application.put_env(:leythers_com, :llm, adapter: FailingAdapter)
+    Application.put_env(:leythers_com, :llm_guard, failure_threshold: 2, open_cooldown_ms: 60_000)
+
+    assert {:error, {:request_failed, 500, _}} = LLMClient.generate("one")
+    assert {:error, {:request_failed, 500, _}} = LLMClient.generate("two")
+    assert {:error, :llm_circuit_open} = LLMClient.generate("three")
   end
 end
