@@ -114,6 +114,26 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert %RawSource{status: "processed"} = Repo.get!(RawSource, source_two.id)
   end
 
+  test "strips HTML markup from feed summaries when building article body" do
+    {:ok, _source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh update with embedded markup",
+        url: "https://example.com/html-summary",
+        body_summary:
+          "<a href=\"https://example.com\">Key update</a>&nbsp;<strong>from the camp</strong>.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 09:30:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    [article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+
+    assert article.body =~ "Key update from the camp."
+    refute article.body =~ "<a"
+    refute article.body =~ "&nbsp;"
+  end
+
   test "skips generation when budget is over cap" do
     assert {:ok, _source} =
              Ingestion.create_raw_source(%{

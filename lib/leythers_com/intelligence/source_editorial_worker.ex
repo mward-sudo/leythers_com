@@ -398,10 +398,36 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp article_summary(cluster_sources) do
     cluster_sources
     |> Enum.map_join("\n", fn source ->
-      summary = source.body_summary || "No summary available from source feed."
+      summary = source.body_summary |> sanitize_summary_text()
       "- #{source.origin_provider}: #{summary}"
     end)
     |> then(&"Automated feed digest:\n\n#{&1}")
+  end
+
+  defp sanitize_summary_text(summary) when is_binary(summary) do
+    cleaned =
+      summary
+      |> String.replace("\u00A0", " ")
+      |> strip_html()
+      |> String.replace("\u00A0", " ")
+      |> String.replace(~r/\s+/, " ")
+      |> String.replace(~r/\s+([,.;:!?])/, "\\1")
+      |> String.trim()
+
+    if cleaned == "" do
+      "No summary available from source feed."
+    else
+      cleaned
+    end
+  end
+
+  defp sanitize_summary_text(_), do: "No summary available from source feed."
+
+  defp strip_html(text) do
+    case Floki.parse_fragment(text) do
+      {:ok, html_nodes} -> Floki.text(html_nodes, sep: " ")
+      _error -> Regex.replace(~r/<[^>]*>/, text, " ")
+    end
   end
 
   defp rumour_cluster?(cluster_sources) do
