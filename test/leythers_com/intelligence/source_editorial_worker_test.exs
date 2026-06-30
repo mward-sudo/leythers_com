@@ -8,11 +8,32 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
   alias LeythersCom.Intelligence.ArticleGenerationDecision
   alias LeythersCom.Intelligence.SourceEditorialWorker
 
+  defmodule FakeDraftAdapter do
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(_prompt, _opts) do
+      {:ok,
+       %{
+         text:
+           "TITLE: <b>Leigh</b> update&nbsp;special\nBODY:\n<p>Line one with <a href=\"https://example.com\">link</a>.</p>\n<p>Line two&nbsp;continues.</p>",
+         model: "fake-draft"
+       }}
+    end
+  end
+
   setup do
     original_generation_config = Application.get_env(:leythers_com, :intelligence_generation)
+    original_llm_config = Application.get_env(:leythers_com, :llm)
 
     on_exit(fn ->
       Application.put_env(:leythers_com, :intelligence_generation, original_generation_config)
+
+      if original_llm_config do
+        Application.put_env(:leythers_com, :llm, original_llm_config)
+      else
+        Application.delete_env(:leythers_com, :llm)
+      end
     end)
 
     Application.put_env(:leythers_com, :intelligence_generation,
@@ -31,6 +52,45 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     )
 
     :ok
+  end
+
+  test "sanitizes HTML markup from llm draft output" do
+    Application.put_env(:leythers_com, :llm, adapter: FakeDraftAdapter, model: "fake-draft")
+
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: true,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, _source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh model draft test",
+        url: "https://example.com/llm-draft-test",
+        body_summary: "Clean source summary for model draft path.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 08:30:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    [article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+
+    assert article.title == "Leigh update special"
+    assert article.body =~ "Line one with link."
+    assert article.body =~ "Line two continues."
+    refute article.title =~ "<"
+    refute article.body =~ "<"
+    refute article.body =~ "&nbsp;"
   end
 
   test "uses configured worker timeout for execution guard" do

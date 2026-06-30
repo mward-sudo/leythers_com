@@ -333,10 +333,17 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         |> Enum.join("\n")
       end
 
-    if blank?(title) or blank?(body) do
+    sanitized_title = sanitize_plain_text(title)
+    sanitized_body = sanitize_plain_text(body)
+
+    if blank?(sanitized_title) or blank?(sanitized_body) do
       :error
     else
-      {:ok, %{title: String.slice(title, 0, 180), body: String.slice(body, 0, 12_000)}}
+      {:ok,
+       %{
+         title: String.slice(sanitized_title, 0, 180),
+         body: String.slice(sanitized_body, 0, 12_000)
+       }}
     end
   end
 
@@ -398,13 +405,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp article_summary(cluster_sources) do
     cluster_sources
     |> Enum.map_join("\n", fn source ->
-      summary = source.body_summary |> sanitize_summary_text()
+      summary = source.body_summary |> sanitize_plain_text()
       "- #{source.origin_provider}: #{summary}"
     end)
     |> then(&"Automated feed digest:\n\n#{&1}")
   end
 
-  defp sanitize_summary_text(summary) when is_binary(summary) do
+  defp sanitize_plain_text(summary) when is_binary(summary) do
     cleaned =
       summary
       |> String.replace("\u00A0", " ")
@@ -421,7 +428,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end
   end
 
-  defp sanitize_summary_text(_), do: "No summary available from source feed."
+  defp sanitize_plain_text(_), do: "No summary available from source feed."
 
   defp strip_html(text) do
     case Floki.parse_fragment(text) do

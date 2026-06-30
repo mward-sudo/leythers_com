@@ -20,8 +20,8 @@ defmodule LeythersComWeb.UserSessionControllerTest do
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
 
-      # Now do a logged in request and assert on the menu
-      conn = get(conn, ~p"/")
+      # Now do a logged in request and assert on authenticated navigation
+      conn = get(conn, ~p"/admin/overview")
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
@@ -84,8 +84,8 @@ defmodule LeythersComWeb.UserSessionControllerTest do
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
 
-      # Now do a logged in request and assert on the menu
-      conn = get(conn, ~p"/")
+      # Now do a logged in request and assert on authenticated navigation
+      conn = get(conn, ~p"/admin/overview")
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
@@ -108,8 +108,8 @@ defmodule LeythersComWeb.UserSessionControllerTest do
 
       assert Accounts.get_user!(user.id).confirmed_at
 
-      # Now do a logged in request and assert on the menu
-      conn = get(conn, ~p"/")
+      # Now do a logged in request and assert on authenticated navigation
+      conn = get(conn, ~p"/admin/overview")
       response = html_response(conn, 200)
       assert response =~ user.email
       assert response =~ ~p"/users/settings"
