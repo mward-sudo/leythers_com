@@ -158,14 +158,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             llm_cost_attrs
           )
 
-          persist_job_effect_event(
-            job,
-            action_str,
-            article.id,
-            source_ids,
-            cluster_snapshot,
-            summary,
-            %{
+          persist_job_effect_event(job, %{
+            decision_action: action_str,
+            permanent_article_id: article.id,
+            process_run_id: run_id,
+            source_ids: source_ids,
+            source_input_snapshot: cluster_snapshot,
+            change_summary: summary,
+            change_details: %{
               significance_score: significance_score,
               significance_threshold: threshold,
               source_count: length(source_ids),
@@ -174,9 +174,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               llm_cost: llm_cost_attrs,
               rumour: rumour?
             },
-            nil,
-            run_id
-          )
+            error_summary: nil
+          })
 
           {:ok, processed_count}
 
@@ -192,14 +191,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             llm_cost_attrs
           )
 
-          persist_job_effect_event(
-            job,
-            "skipped_publish_error",
-            nil,
-            source_ids,
-            cluster_snapshot,
-            summary,
-            %{
+          persist_job_effect_event(job, %{
+            decision_action: "skipped_publish_error",
+            permanent_article_id: nil,
+            process_run_id: run_id,
+            source_ids: source_ids,
+            source_input_snapshot: cluster_snapshot,
+            change_summary: summary,
+            change_details: %{
               significance_score: significance_score,
               significance_threshold: threshold,
               source_count: length(source_ids),
@@ -208,9 +207,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               llm_cost: llm_cost_attrs,
               rumour: rumour?
             },
-            inspect(reason),
-            run_id
-          )
+            error_summary: inspect(reason)
+          })
 
           {:ok, 0}
       end
@@ -226,14 +224,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         zero_cost_attrs()
       )
 
-      persist_job_effect_event(
-        job,
-        "skipped_budget",
-        nil,
-        source_ids,
-        cluster_snapshot,
-        summary,
-        %{
+      persist_job_effect_event(job, %{
+        decision_action: "skipped_budget",
+        permanent_article_id: nil,
+        process_run_id: run_id,
+        source_ids: source_ids,
+        source_input_snapshot: cluster_snapshot,
+        change_summary: summary,
+        change_details: %{
           significance_score: significance_score,
           significance_threshold: threshold,
           source_count: length(source_ids),
@@ -242,9 +240,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
           llm_cost: zero_cost_attrs(),
           rumour: rumour?
         },
-        nil,
-        run_id
-      )
+        error_summary: nil
+      })
 
       {:halt, :budget_blocked}
     end
@@ -692,17 +689,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp json_safe(list) when is_list(list), do: Enum.map(list, &json_safe/1)
   defp json_safe(value), do: value
 
-  defp persist_job_effect_event(
-         job,
-         decision_action,
-         permanent_article_id,
-         source_ids,
-         source_input_snapshot,
-         change_summary,
-         change_details,
-         error_summary,
-         process_run_id
-       ) do
+  defp persist_job_effect_event(job, attrs) do
     oban_job_id = if is_integer(job.id), do: job.id, else: 0
     queue = if is_binary(job.queue), do: job.queue, else: "intelligence"
 
@@ -720,14 +707,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         queue: queue,
         state: "completed",
         attempt: attempt,
-        decision_action: decision_action,
-        permanent_article_id: permanent_article_id,
-        process_run_id: process_run_id,
-        source_ids: source_ids,
-        source_input_snapshot: json_safe(source_input_snapshot),
-        change_summary: change_summary,
-        change_details: json_safe(change_details),
-        error_summary: error_summary
+        decision_action: attrs.decision_action,
+        permanent_article_id: attrs.permanent_article_id,
+        process_run_id: attrs.process_run_id,
+        source_ids: attrs.source_ids,
+        source_input_snapshot: json_safe(attrs.source_input_snapshot),
+        change_summary: attrs.change_summary,
+        change_details: json_safe(attrs.change_details),
+        error_summary: attrs.error_summary
       })
 
     :ok
