@@ -598,7 +598,7 @@ defmodule LeythersCom.Intelligence do
       running_jobs: running_jobs || 0,
       queued_jobs: queued_jobs || 0,
       pending_sources: pending_sources || 0,
-      left_to_run: (queued_jobs || 0) + (pending_sources || 0)
+      left_to_run: queued_jobs || 0
     }
   end
 

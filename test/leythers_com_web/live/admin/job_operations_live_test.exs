@@ -63,7 +63,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert html =~ "Running now"
       assert html =~ ">1<"
       assert html =~ "Left to run"
-      assert html =~ ">2<"
+      assert html =~ ">1<"
       assert html =~ "Queued jobs"
       assert html =~ "Pending sources"
     end
