@@ -297,9 +297,12 @@ defmodule LeythersCom.Content do
          raw_body,
          source_ids,
          true,
-         _recency_window_hours
+         recency_window_hours
        ) do
-    create_ai_article(voiced_output, raw_body, source_ids)
+    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours, source_ids) do
+      nil -> create_ai_article(voiced_output, raw_body, source_ids)
+      article -> update_ai_article(article, voiced_output, raw_body, source_ids)
+    end
   end
 
   defp publish_or_update_ai_decision(
@@ -309,7 +312,7 @@ defmodule LeythersCom.Content do
          false,
          recency_window_hours
        ) do
-    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours) do
+    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours, source_ids) do
       nil -> create_ai_article(voiced_output, raw_body, source_ids)
       article -> update_ai_article(article, voiced_output, raw_body, source_ids)
     end
@@ -342,7 +345,7 @@ defmodule LeythersCom.Content do
     |> then(&insert_article_sources(article_id, &1))
   end
 
-  defp existing_source_ids_for_article(article_id) do
+  defp existing_source_ids_for_article(article_id) when is_binary(article_id) do
     import Ecto.Query
 
     from(article_source in ArticleSource,
@@ -352,18 +355,39 @@ defmodule LeythersCom.Content do
     |> Repo.all()
   end
 
-  defp find_recent_matching_ai_article(title, recency_window_hours) do
+  defp existing_source_ids_for_article(_article_id), do: []
+
+  defp find_recent_matching_ai_article(title, recency_window_hours, source_ids) do
     import Ecto.Query
 
     cutoff = DateTime.add(DateTime.utc_now(), -recency_window_hours * 3600, :second)
 
-    PermanentArticle
-    |> where([article], article.author_type == "ai_editor")
-    |> where([article], article.status == "published")
-    |> where([article], article.updated_at >= ^cutoff)
-    |> order_by([article], desc: article.updated_at)
-    |> Repo.all()
-    |> Enum.find(fn article -> StorySimilarity.similar?(article.title, title) end)
+    recent_articles =
+      PermanentArticle
+      |> where([article], article.author_type == "ai_editor")
+      |> where([article], article.status == "published")
+      |> where([article], article.updated_at >= ^cutoff)
+      |> order_by([article], desc: article.updated_at)
+      |> Repo.all()
+
+    source_id_set = MapSet.new(source_ids)
+
+    Enum.find(recent_articles, fn article ->
+      StorySimilarity.similar?(article.title, title) or
+        has_source_overlap?(article.id, source_id_set)
+    end)
+  end
+
+  defp has_source_overlap?(article_id, source_id_set) do
+    if MapSet.size(source_id_set) == 0 do
+      false
+    else
+      article_id
+      |> existing_source_ids_for_article()
+      |> MapSet.new()
+      |> MapSet.disjoint?(source_id_set)
+      |> Kernel.not()
+    end
   end
 
   defp fetch_attr(attrs, key) do

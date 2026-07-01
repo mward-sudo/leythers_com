@@ -437,9 +437,45 @@ defmodule LeythersCom.ContentTest do
       assert count_article_sources(updated_article.id) == 2
     end
 
-    test "creates a new ai article when change is significant" do
-      source_id =
+    test "creates a new ai article when change is significant and story is different" do
+      source_id_one =
         create_source_id!("Leigh significant source", "https://example.com/ai-significant-source")
+
+      source_id_two =
+        create_source_id!(
+          "Leigh academy source",
+          "https://example.com/ai-significant-source-different-story"
+        )
+
+      assert {:ok, :created, first_article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh set for another big night",
+                   body: "Base story"
+                 },
+                 [source_id_one]
+               )
+
+      assert {:ok, :created, second_article} =
+               Content.publish_or_update_ai_article(
+                 %{
+                   title: "Leigh academy prospects shine in reserve clash",
+                   body: "Significant shift"
+                 },
+                 [source_id_two],
+                 significant_change: true
+               )
+
+      refute second_article.id == first_article.id
+      assert second_article.version == 1
+    end
+
+    test "updates recent matching ai article even when change is significant" do
+      source_id =
+        create_source_id!(
+          "Leigh significant update source",
+          "https://example.com/ai-significant-update-source"
+        )
 
       assert {:ok, :created, first_article} =
                Content.publish_or_update_ai_article(
@@ -450,18 +486,18 @@ defmodule LeythersCom.ContentTest do
                  [source_id]
                )
 
-      assert {:ok, :created, second_article} =
+      assert {:ok, :updated, second_article} =
                Content.publish_or_update_ai_article(
                  %{
                    title: "Leigh set for another big night with transfer twist",
-                   body: "Significant shift"
+                   body: "Significant update on same story"
                  },
                  [source_id],
                  significant_change: true
                )
 
-      refute second_article.id == first_article.id
-      assert second_article.version == 1
+      assert second_article.id == first_article.id
+      assert second_article.version == first_article.version + 1
     end
 
     test "returns error when ai article has no source links" do

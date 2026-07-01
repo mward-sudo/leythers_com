@@ -120,6 +120,9 @@ if config_env() == :dev do
       _ -> :ollama
     end
 
+  dev_ingestion_default = if dev_provider == :openrouter, do: 2, else: 1
+  dev_intelligence_default = if dev_provider == :openrouter, do: 4, else: 1
+
   active_profile =
     case dev_provider do
       :openrouter -> default_openrouter_profile
@@ -128,6 +131,12 @@ if config_env() == :dev do
 
   config :leythers_com, :llm_provider, dev_provider
   config :leythers_com, :llm, active_profile
+
+  config :leythers_com, Oban,
+    queues: [
+      ingestion: env_int.("DEV_OBAN_QUEUE_INGESTION", dev_ingestion_default),
+      intelligence: env_int.("DEV_OBAN_QUEUE_INTELLIGENCE", dev_intelligence_default)
+    ]
 end
 
 if config_env() == :prod do
@@ -167,8 +176,8 @@ if config_env() == :prod do
     ],
     queues: [
       default: env_int.("OBAN_QUEUE_DEFAULT", 5),
-      ingestion: env_int.("OBAN_QUEUE_INGESTION", 1),
-      intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 1)
+      ingestion: env_int.("OBAN_QUEUE_INGESTION", 2),
+      intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 4)
     ]
 
   llm_provider =

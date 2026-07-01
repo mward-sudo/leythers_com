@@ -32,7 +32,7 @@ Recommended environment variables:
 8. `ECTO_IPV6` (set to `true` only when your platform requires IPv6 sockets)
 9. `OBAN_QUEUE_DEFAULT` (default: `5`)
 10. `OBAN_QUEUE_INGESTION` (default: `2`)
-11. `OBAN_QUEUE_INTELLIGENCE` (default: `1`)
+11. `OBAN_QUEUE_INTELLIGENCE` (default: `4`)
 12. `OBAN_PRUNER_MAX_AGE_SECONDS` (default: `604800`)
 13. `LLM_PROVIDER` (production default: `openrouter`)
 14. `OPENROUTER_API_KEY` (required in production when `LLM_PROVIDER=openrouter`)
@@ -71,6 +71,11 @@ Development provider precedence on startup:
 
 1. If `DEV_LLM_PROVIDER` is set, it wins.
 2. Otherwise, app restores persisted `dev_llm_provider` from DB.
+
+Development queue overrides:
+
+1. `DEV_OBAN_QUEUE_INGESTION` (OpenRouter default: `2`, Ollama default: `1`)
+2. `DEV_OBAN_QUEUE_INTELLIGENCE` (OpenRouter default: `4`, Ollama default: `1`)
 
 Local Ollama testing:
 
