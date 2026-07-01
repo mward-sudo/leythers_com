@@ -5,6 +5,7 @@ defmodule LeythersCom.Ingestion do
 
   import Ecto.Query
 
+  alias LeythersCom.Ingestion.ArticleContentFetcher
   alias LeythersCom.Ingestion.FetchRssFeedWorker
   alias LeythersCom.Ingestion.HttpClient.Req
   alias LeythersCom.Ingestion.Providers.Basic
@@ -289,12 +290,46 @@ defmodule LeythersCom.Ingestion do
 
   defp ingest_feed_items(feed_url, origin_provider, include_keywords, http_client) do
     with {:ok, feed_body} <- http_client.fetch(feed_url) do
-      feed_body
-      |> Rss.parse_items(origin_provider, feed_url)
-      |> maybe_filter_items_by_keywords(include_keywords)
-      |> reduce_feed_items()
-      |> then(&{:ok, &1})
+      stats =
+        feed_body
+        |> Rss.parse_items(origin_provider, feed_url)
+        |> maybe_filter_items_by_keywords(include_keywords)
+        |> reduce_feed_items()
+
+      # Spawn background task to fetch article content for newly discovered sources
+      spawn_content_fetcher(stats.new_source_ids)
+
+      {:ok, stats}
     end
+  end
+
+  defp spawn_content_fetcher([_first | _rest] = source_ids) do
+    Task.start_link(fn ->
+      Enum.each(source_ids, &fetch_and_store_content/1)
+    end)
+  end
+
+  defp spawn_content_fetcher(_source_ids), do: :ok
+
+  defp fetch_and_store_content(source_id) do
+    case Repo.get(RawSource, source_id) do
+      nil ->
+        :ok
+
+      source ->
+        case ArticleContentFetcher.fetch_and_extract(source.url) do
+          {:ok, content} ->
+            source
+            |> RawSource.changeset(%{content: content})
+            |> Repo.update()
+
+          {:error, _reason} ->
+            # Log but don't fail - body_summary is sufficient fallback
+            :ok
+        end
+    end
+  rescue
+    _ -> :ok
   end
 
   defp emit_feed_ingestion_telemetry(result, started_at, origin_provider, feed_url) do

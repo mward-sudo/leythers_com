@@ -11,6 +11,7 @@ defmodule LeythersCom.Ingestion.RawSource do
     field :title, :string
     field :url, :string
     field :body_summary, :string
+    field :content, :string
     field :origin_provider, :string
     field :external_published_at, :utc_datetime_usec
     field :status, :string, default: "pending"
@@ -26,6 +27,7 @@ defmodule LeythersCom.Ingestion.RawSource do
       :title,
       :url,
       :body_summary,
+      :content,
       :origin_provider,
       :external_published_at,
       :status,

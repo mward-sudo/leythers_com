@@ -431,7 +431,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp article_summary(cluster_sources) do
     cluster_sources
     |> Enum.map_join("\n", fn source ->
-      summary = source.body_summary |> sanitize_plain_text() |> truncate_for_prompt(280)
+      # Prefer full content if available; fall back to body_summary
+      raw_text = source.content || source.body_summary || ""
+      summary = raw_text |> sanitize_plain_text() |> truncate_for_prompt(500)
       "- #{source.origin_provider}: #{summary}"
     end)
     |> then(&"Automated feed digest:\n\n#{&1}")
