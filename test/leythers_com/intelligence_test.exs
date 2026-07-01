@@ -569,6 +569,30 @@ defmodule LeythersCom.IntelligenceTest do
     end
   end
 
+  describe "recover_source_editorial_work/0" do
+    test "cancels stale source editorial jobs and enqueues backlog drain" do
+      stale_job =
+        create_oban_job(
+          "executing",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      unrelated_job =
+        create_oban_job(
+          "available",
+          "LeythersCom.Ingestion.FetchRssFeedWorker",
+          "ingestion"
+        )
+
+      assert {:ok, %{cancelled_jobs: 1, enqueue_status: :ok}} =
+               Intelligence.recover_source_editorial_work()
+
+      assert Repo.get!(Job, stale_job.id).state == "cancelled"
+      assert Repo.get!(Job, unrelated_job.id).state == "available"
+    end
+  end
+
   defp attach_telemetry_handler(event_name) do
     handler_id = "intelligence-test-#{System.unique_integer([:positive, :monotonic])}"
 

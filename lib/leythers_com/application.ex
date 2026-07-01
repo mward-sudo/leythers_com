@@ -5,6 +5,7 @@ defmodule LeythersCom.Application do
 
   use Application
 
+  alias LeythersCom.Intelligence
   alias LeythersComWeb.Endpoint
 
   @impl true
@@ -25,7 +26,15 @@ defmodule LeythersCom.Application do
     # See https://elixir.hexdocs.pm/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: LeythersCom.Supervisor]
-    Supervisor.start_link(children, opts)
+
+    case Supervisor.start_link(children, opts) do
+      {:ok, _pid} = result ->
+        maybe_resume_editorial_work_after_boot()
+        result
+
+      other ->
+        other
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration
@@ -34,5 +43,16 @@ defmodule LeythersCom.Application do
   def config_change(changed, _new, removed) do
     Endpoint.config_change(changed, removed)
     :ok
+  end
+
+  defp maybe_resume_editorial_work_after_boot do
+    oban_config = Application.get_env(:leythers_com, Oban, [])
+    test_mode? = Keyword.get(oban_config, :testing) == :inline
+
+    if not test_mode? do
+      Task.start(fn ->
+        _ = Intelligence.recover_source_editorial_work()
+      end)
+    end
   end
 end

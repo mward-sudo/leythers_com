@@ -9,6 +9,7 @@ defmodule LeythersCom.Intelligence do
   alias LeythersCom.Intelligence.CostLedger
   alias LeythersCom.Intelligence.HomepageRankingDecision
   alias LeythersCom.Intelligence.JobEffectEvent
+  alias LeythersCom.Intelligence.SourceEditorialWorker
   alias LeythersCom.Repo
   alias Oban.Job
 
@@ -253,12 +254,7 @@ defmodule LeythersCom.Intelligence do
 
     cancelled_count =
       jobs_to_cancel
-      |> Enum.count(fn job ->
-        case Oban.cancel_job(job.id) do
-          {:ok, _job} -> true
-          _ -> false
-        end
-      end)
+      |> Enum.count(&cancel_oban_job_with_executing_fallback/1)
 
     :telemetry.execute(
       [:leythers_com, :intelligence, :cancel_all_jobs, :stop],
@@ -268,6 +264,71 @@ defmodule LeythersCom.Intelligence do
 
     {:ok, %{cancelled_jobs: cancelled_count}}
   end
+
+  def recover_source_editorial_work do
+    started_at = System.monotonic_time()
+    worker_module_name = to_string(LeythersCom.Intelligence.SourceEditorialWorker)
+    worker_name = String.trim_leading(worker_module_name, "Elixir.")
+    worker_names = [worker_name, worker_module_name]
+    non_terminal_states = ["available", "scheduled", "executing", "retryable"]
+
+    stale_jobs =
+      Job
+      |> where([job], job.worker in ^worker_names)
+      |> where([job], job.state in ^non_terminal_states)
+      |> Repo.all()
+
+    cancelled_count =
+      stale_jobs
+      |> Enum.count(&cancel_oban_job_with_executing_fallback/1)
+
+    enqueue_result = SourceEditorialWorker.enqueue(%{"drain_backlog" => true})
+
+    enqueue_status =
+      case enqueue_result do
+        {:ok, _job} -> :ok
+        {:error, _changeset} -> :error
+      end
+
+    :telemetry.execute(
+      [:leythers_com, :intelligence, :source_editorial_recovery, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      %{result: enqueue_status, cancelled_jobs: cancelled_count}
+    )
+
+    {:ok, %{cancelled_jobs: cancelled_count, enqueue_status: enqueue_status}}
+  end
+
+  defp cancel_oban_job_with_executing_fallback(job) do
+    case Oban.cancel_job(job.id) do
+      :ok -> confirm_or_force_cancelled(job)
+      {:ok, _job} -> confirm_or_force_cancelled(job)
+      _ -> force_cancel_executing_job(job)
+    end
+  end
+
+  defp confirm_or_force_cancelled(%Job{id: job_id, state: "executing"} = job) do
+    case Repo.get(Job, job_id) do
+      %Job{state: "executing"} -> force_cancel_executing_job(job)
+      %Job{} -> true
+      nil -> true
+    end
+  end
+
+  defp confirm_or_force_cancelled(_job), do: true
+
+  defp force_cancel_executing_job(%Job{id: job_id, state: "executing"}) do
+    now = DateTime.utc_now()
+
+    {updated_rows, _} =
+      Job
+      |> where([job], job.id == ^job_id and job.state == "executing")
+      |> Repo.update_all(set: [state: "cancelled", cancelled_at: now])
+
+    updated_rows > 0
+  end
+
+  defp force_cancel_executing_job(_job), do: false
 
   def job_operations_bucket_counts(filters \\ %{}) when is_map(filters) do
     base_query = job_operations_base_query(filters)

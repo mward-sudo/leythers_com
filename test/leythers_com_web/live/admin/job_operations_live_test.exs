@@ -242,6 +242,20 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
     end
 
     test "regenerates all processed sources from admin controls", %{conn: conn} do
+      running_job =
+        create_job(
+          "executing",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      queued_job =
+        create_job(
+          "available",
+          "LeythersCom.Ingestion.FetchRssFeedWorker",
+          "ingestion"
+        )
+
       {:ok, processed_a} =
         Ingestion.create_raw_source(%{
           title: "All Regen A",
@@ -269,6 +283,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       |> render_click()
 
       assert render(view) =~ "Queued full regeneration"
+      assert render(view) =~ "Cancelled 2 job(s)"
+      assert Repo.get!(Job, running_job.id).id == running_job.id
+      assert Repo.get!(Job, queued_job.id).id == queued_job.id
       assert Repo.get!(RawSource, processed_a.id).status == "pending"
       assert Repo.get!(RawSource, processed_b.id).status == "pending"
     end
