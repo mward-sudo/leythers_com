@@ -7,9 +7,9 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
   import Ecto.Query
 
   alias LeythersCom.Content
-  alias LeythersCom.Intelligence.HomepageRefreshWorker
   alias LeythersCom.Intelligence.HomepageRanker
   alias LeythersCom.Intelligence.HomepageRankingDecision
+  alias LeythersCom.Intelligence.HomepageRefreshWorker
   alias LeythersCom.Repo
 
   @trigger_cache_table :leythers_com_editorial_orchestration_trigger_cache
@@ -134,11 +134,20 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
   end
 
   def run_source_update_refresh(opts \\ []) do
-    try do
-      refresh_homepage_layout(Keyword.put(normalize_opts(opts), :triggered_by, :source_update))
-    after
-      mark_refresh_finished()
-    end
+    task =
+      Task.Supervisor.async_nolink(LeythersCom.TaskSupervisor, fn ->
+        refresh_homepage_layout(Keyword.put(normalize_opts(opts), :triggered_by, :source_update))
+      end)
+
+    result =
+      case Task.yield(task, :infinity) || Task.shutdown(task, :brutal_kill) do
+        {:ok, value} -> value
+        {:exit, reason} -> {:error, reason}
+        nil -> {:error, :refresh_shutdown}
+      end
+
+    mark_refresh_finished()
+    result
   end
 
   def clear_trigger_cache! do
@@ -196,17 +205,7 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
       ])
 
     Enum.reduce(opts, [], fn {k, v}, acc ->
-      key =
-        case k do
-          key when is_atom(key) ->
-            key
-
-          key when is_binary(key) ->
-            case safe_to_existing_atom(key) do
-              {:ok, atom_key} -> atom_key
-              :error -> nil
-            end
-        end
+      key = normalize_opt_key(k)
 
       if key && MapSet.member?(allowed, key) do
         [{key, v} | acc]
@@ -218,6 +217,17 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
   end
 
   defp normalize_opts(_opts), do: []
+
+  defp normalize_opt_key(key) when is_atom(key), do: key
+
+  defp normalize_opt_key(key) when is_binary(key) do
+    case safe_to_existing_atom(key) do
+      {:ok, atom_key} -> atom_key
+      :error -> nil
+    end
+  end
+
+  defp normalize_opt_key(_key), do: nil
 
   defp safe_to_existing_atom(key) do
     {:ok, String.to_existing_atom(key)}

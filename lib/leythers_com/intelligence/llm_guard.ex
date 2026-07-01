@@ -93,12 +93,10 @@ defmodule LeythersCom.Intelligence.LLMGuard do
     # Keep backwards compatibility when fixed cooldown is explicitly configured.
     guard_config = Application.get_env(:leythers_com, :llm_guard, [])
 
-    cond do
-      progressive_backoff_configured?(guard_config) ->
-        progressive_cooldown_ms(guard_config, failures, threshold)
-
-      true ->
-        Keyword.get(guard_config, :open_cooldown_ms, @default_open_cooldown_ms)
+    if progressive_backoff_configured?(guard_config) do
+      progressive_cooldown_ms(guard_config, failures, threshold)
+    else
+      Keyword.get(guard_config, :open_cooldown_ms, @default_open_cooldown_ms)
     end
   end
 
