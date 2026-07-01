@@ -92,7 +92,8 @@ if config_env() == :prod do
     model: System.get_env("LLM_MODEL") || "qwen3:1.7b",
     temperature: env_float.("LLM_TEMPERATURE", 0.4),
     num_predict: env_int.("LLM_NUM_PREDICT", 600),
-    timeout_ms: env_int.("LLM_TIMEOUT_MS", 30_000)
+    timeout_ms: env_int.("LLM_TIMEOUT_MS", 30_000),
+    log_requests: env_bool.("LLM_LOG_REQUESTS", false)
 
   config :leythers_com, :llm_guard,
     failure_threshold: env_int.("LLM_GUARD_FAILURE_THRESHOLD", 4),

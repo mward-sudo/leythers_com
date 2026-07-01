@@ -34,6 +34,25 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
 
       assert html =~ "No processes yet"
       assert html =~ "Ingestion runs and editorial reviews will appear here"
+      assert html =~ "Live Activity"
+      assert html =~ "Active now"
+      assert html =~ "none"
+      assert html =~ "Up next"
+    end
+
+    test "toggles live log popover", %{conn: conn} do
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+
+      refute has_element?(view, "#live-log-popover")
+
+      view
+      |> element("#toggle-live-log")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Live Log"
+      assert html =~ "Auto-follows while you stay at the bottom."
+      assert has_element?(view, "#live-log-entries")
     end
 
     test "shows running and left-to-run progress counters", %{conn: conn} do
@@ -51,13 +70,15 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
           "intelligence"
         )
 
-      {:ok, _pending_source} =
+      {:ok, pending_source} =
         Ingestion.create_raw_source(%{
           title: "Pending Source",
           url: "https://example.com/pending-source",
           origin_provider: "job_progress_test",
           external_published_at: DateTime.utc_now()
         })
+
+      expected_source_prefix = String.slice(pending_source.id, 0, 8)
 
       {:ok, _view, html} = live(conn, ~p"/admin/jobs")
 
@@ -67,6 +88,45 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert html =~ ">1<"
       assert html =~ "Queued jobs"
       assert html =~ "Pending sources"
+      assert html =~ "Active now"
+      assert html =~ "Editorial Review [run"
+      assert html =~ "Up next"
+      assert html =~ "Pending Source [src"
+      assert html =~ "[src #{expected_source_prefix}]"
+    end
+
+    test "shows active now for executing jobs even with completed event history", %{conn: conn} do
+      process_run_id = Ecto.UUID.generate()
+
+      job =
+        create_job(
+          "executing",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      {:ok, _event} =
+        Intelligence.create_job_effect_event(%{
+          oban_job_id: job.id,
+          worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+          queue: "intelligence",
+          state: "completed",
+          attempt: 1,
+          decision_action: "created",
+          process_run_id: process_run_id,
+          source_ids: [Ecto.UUID.generate()],
+          source_input_snapshot: %{},
+          change_summary: "created article",
+          change_details: %{outcome: "created"}
+        })
+
+      {:ok, _view, html} = live(conn, ~p"/admin/jobs")
+
+      assert html =~ "Running now"
+      assert html =~ ">1<"
+      assert html =~ "Active now"
+      refute html =~ "Active now</p>\n              <p class=\"text-base-content/80\">none"
+      assert html =~ "Editorial Review [run oban-"
     end
 
     test "displays processes with their events", %{conn: conn} do
@@ -160,6 +220,49 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       html = render(view)
       assert html =~ "Event Details"
       assert html =~ "https://example.com/expanded"
+    end
+
+    test "shows inferred llm operation in event details", %{conn: conn} do
+      process_run_id = Ecto.UUID.generate()
+
+      job =
+        create_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      {:ok, event} =
+        Intelligence.create_job_effect_event(%{
+          oban_job_id: job.id,
+          worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+          queue: "intelligence",
+          state: "completed",
+          attempt: 1,
+          decision_action: "created",
+          process_run_id: process_run_id,
+          source_ids: [Ecto.UUID.generate()],
+          source_input_snapshot: %{},
+          change_summary: "created article",
+          change_details: %{outcome: "created"},
+          llm_prompt: "Write a Leythers-style rugby article in three parts using these source notes.",
+          llm_output: "HEADLINE: Test"
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+
+      view
+      |> element("#process-#{process_run_id}")
+      |> render_click()
+
+      view
+      |> element("#event-btn-#{event.id}")
+      |> render_click()
+
+      html = render(view)
+
+      assert html =~ "LLM operation"
+      assert html =~ "Generate article draft"
     end
 
     test "supports pagination for processes", %{conn: conn} do

@@ -694,7 +694,7 @@ defmodule LeythersCom.Intelligence do
   end
 
   def list_executing_jobs_as_processes do
-    # Fetch currently executing Oban jobs, excluding those that have already created completed events
+    # Fetch currently executing Oban jobs directly from Oban state.
     executing_job_ids =
       from(j in "oban_jobs",
         where: j.state in ["executing", "retryable"],
@@ -703,21 +703,9 @@ defmodule LeythersCom.Intelligence do
       )
       |> Repo.all()
 
-    # Filter out jobs that have completed events (safety check for stuck jobs)
-    executing_job_ids_with_no_completion =
-      executing_job_ids
-      |> Enum.reject(fn job_id ->
-        from(e in "job_effect_events",
-          where: e.oban_job_id == ^job_id and e.state == "completed",
-          limit: 1,
-          select: e.id
-        )
-        |> Repo.exists?()
-      end)
-
-    # Now fetch details for the filtered jobs
+    # Fetch details for jobs currently marked as executing/retryable.
     from(j in "oban_jobs",
-      where: j.id in ^executing_job_ids_with_no_completion,
+      where: j.id in ^executing_job_ids,
       select: %{
         id: j.id,
         worker: j.worker,

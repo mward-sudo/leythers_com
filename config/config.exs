@@ -92,7 +92,8 @@ config :leythers_com, :llm,
   model: "qwen3:1.7b",
   temperature: 0.4,
   num_predict: 600,
-  timeout_ms: 30_000
+  timeout_ms: 30_000,
+  log_requests: false
 
 config :leythers_com, :homepage_ranking,
   llm_enabled: true,

@@ -36,6 +36,18 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
        pending_sources: 0,
        left_to_run: 0
      })
+     |> assign(
+       :live_activity,
+       %{
+         active_now: ["none"],
+         up_next: ["none"],
+         more_up_next: 0,
+         queue_context: "0 running, 0 queued, 0 pending"
+       }
+     )
+     |> assign(:live_activity_text, "Active now: none | Up next: none")
+      |> assign(:log_popover_open, false)
+      |> assign(:log_entries, [])
      |> assign(:selected_event_id, nil)
      |> assign(:selected_event, nil)}
   end
@@ -85,6 +97,15 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       end
 
     progress_snapshot = Intelligence.job_operations_progress_snapshot()
+    live_pending_sources = Intelligence.pending_editorial_sources(3)
+
+    live_activity = build_live_activity(progress_snapshot, processes_page.entries, live_pending_sources)
+
+    live_activity_text =
+      "Active now: #{Enum.join(live_activity.active_now, ", ")} | Up next: #{Enum.join(live_activity.up_next, ", ")}"
+
+    log_entries =
+      build_log_entries(progress_snapshot, processes_page.entries, process_events, live_pending_sources)
 
     query_params =
       params
@@ -99,9 +120,66 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     |> assign(:process_events, process_events)
     |> assign(:pending_sources, pending_sources)
     |> assign(:progress_snapshot, progress_snapshot)
+    |> assign(:live_activity, live_activity)
+    |> assign(:live_activity_text, live_activity_text)
+    |> assign(:log_entries, log_entries)
     |> assign(:selected_event_id, selected_event_id)
     |> assign(:selected_event, selected_event)
   end
+
+  defp build_live_activity(progress_snapshot, processes, live_pending_sources) do
+    running_jobs = progress_snapshot.running_jobs || 0
+    queued_jobs = progress_snapshot.queued_jobs || 0
+    pending_sources_count = progress_snapshot.pending_sources || 0
+
+    active_process_labels =
+      processes
+      |> Enum.filter(&(&1.status == :running))
+      |> Enum.map(&process_label/1)
+      |> Enum.uniq()
+
+    pending_source_labels = Enum.map(live_pending_sources, &source_label/1)
+    more_up_next = max(pending_sources_count - length(pending_source_labels), 0)
+
+    %{
+      active_now: if(active_process_labels == [], do: ["none"], else: active_process_labels),
+      up_next: if(pending_source_labels == [], do: ["none"], else: pending_source_labels),
+      more_up_next: more_up_next,
+      queue_context: "#{running_jobs} running, #{queued_jobs} queued, #{pending_sources_count} pending"
+    }
+  end
+
+  defp process_label(process) do
+    name = Map.get(process, :process_name, "process")
+    run_id = Map.get(process, :process_run_id)
+    "#{name} [run #{short_id(run_id)}]"
+  end
+
+  defp source_label(source) do
+    title = Map.get(source, :title, "untitled source")
+    source_id = Map.get(source, :id)
+    "#{title} [src #{short_id(source_id)}]"
+  end
+
+  defp short_id(nil), do: "n/a"
+
+  defp short_id(id) when is_binary(id) do
+    cond do
+      String.valid?(id) ->
+        String.slice(id, 0, 8)
+
+      byte_size(id) == 16 ->
+        case Ecto.UUID.load(id) do
+          {:ok, uuid} -> String.slice(uuid, 0, 8)
+          :error -> id |> Base.encode16(case: :lower) |> String.slice(0, 8)
+        end
+
+      true ->
+        id |> Base.encode16(case: :lower) |> String.slice(0, 8)
+    end
+  end
+
+  defp short_id(id), do: id |> inspect() |> String.slice(0, 8)
 
   defp schedule_refresh do
     Process.send_after(self(), :refresh, @refresh_interval_ms)
@@ -123,6 +201,11 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
     {:noreply,
      push_patch(socket, to: ~p"/admin/jobs?process_id=#{process_id}&event_id=#{event_id}")}
+  end
+
+  @impl true
+  def handle_event("toggle-live-log", _params, socket) do
+    {:noreply, assign(socket, :log_popover_open, !socket.assigns.log_popover_open)}
   end
 
   @impl true
@@ -220,6 +303,39 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
           </div>
         </div>
 
+        <section
+          id="job-progress-description"
+          class="mb-6 rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm"
+        >
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <p class="text-xs font-semibold uppercase tracking-wider text-base-content/60">
+              Live Activity
+            </p>
+            <p class="text-xs text-base-content/50">{@live_activity.queue_context}</p>
+          </div>
+
+          <div class="space-y-2 text-sm">
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
+              <p class="min-w-20 text-xs font-medium uppercase tracking-wider text-base-content/50">
+                Active now
+              </p>
+              <p class="text-base-content/80">{Enum.join(@live_activity.active_now, ", ")}</p>
+            </div>
+
+            <div class="flex flex-col gap-1 sm:flex-row sm:items-start sm:gap-2">
+              <p class="min-w-20 text-xs font-medium uppercase tracking-wider text-base-content/50">
+                Up next
+              </p>
+              <p class="text-base-content/80">
+                {Enum.join(@live_activity.up_next, ", ")}
+                <%= if @live_activity.more_up_next > 0 do %>
+                  <span class="text-base-content/60"> (+{@live_activity.more_up_next} more)</span>
+                <% end %>
+              </p>
+            </div>
+          </div>
+        </section>
+
         <%!-- Process Timeline --%>
         <div class="space-y-3" id="process-timeline">
           <%= if @processes_page.entries == [] do %>
@@ -280,6 +396,58 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
                 Next <.icon name="hero-chevron-right" class="h-4 w-4" />
               </.link>
             </div>
+          <% end %>
+        </div>
+
+        <%!-- Live Log Popover --%>
+        <div class="fixed bottom-4 right-4 z-40 flex flex-col items-end gap-2">
+          <button
+            id="toggle-live-log"
+            type="button"
+            class="btn btn-primary btn-sm shadow-lg"
+            phx-click="toggle-live-log"
+          >
+            <.icon name="hero-command-line" class="h-4 w-4" />
+            <%= if @log_popover_open, do: "Hide Live Log", else: "Live Log" %>
+          </button>
+
+          <%= if @log_popover_open do %>
+            <section
+              id="live-log-popover"
+              class="w-[min(92vw,44rem)] rounded-2xl border border-base-300 bg-base-100 shadow-2xl"
+            >
+              <div class="flex items-center justify-between border-b border-base-300 px-4 py-3">
+                <div>
+                  <p class="text-xs font-semibold uppercase tracking-wider text-base-content/60">
+                    Live Log
+                  </p>
+                  <p class="text-xs text-base-content/50">
+                    Auto-follows while you stay at the bottom.
+                  </p>
+                </div>
+                <span class="text-xs text-base-content/50">{@live_activity.queue_context}</span>
+              </div>
+
+              <div
+                id="live-log-entries"
+                phx-hook="LogTail"
+                class="max-h-80 overflow-y-auto px-4 py-3"
+              >
+                <div class="space-y-1.5 font-mono text-xs leading-relaxed">
+                  <%= for entry <- @log_entries do %>
+                    <p class="text-base-content/80">
+                      <span class="text-base-content/50">[{format_datetime(entry.timestamp)}]</span>
+                      <span class="font-semibold text-base-content/60">{entry.category}</span>
+                      <span>{entry.message}</span>
+                    </p>
+                  <% end %>
+
+                  <%= if @log_entries == [] do %>
+                    <p class="text-base-content/50">No activity yet.</p>
+                  <% end %>
+                </div>
+              </div>
+            </section>
           <% end %>
         </div>
 
@@ -585,6 +753,13 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
             </p>
           </div>
         </div>
+
+        <%= if @event.llm_prompt do %>
+          <div class="mt-3">
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">LLM operation</p>
+            <p class="mt-1 text-sm font-semibold text-base-content">{llm_operation_label(@event)}</p>
+          </div>
+        <% end %>
       </div>
 
       <%= if @event.change_summary do %>
@@ -692,6 +867,85 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   defp source_inputs(%{"items" => items}) when is_list(items), do: items
   defp source_inputs(%{"feed" => feed}) when is_map(feed), do: [feed]
   defp source_inputs(_snapshot), do: []
+
+  defp build_log_entries(progress_snapshot, processes, process_events, pending_sources) do
+    now = DateTime.utc_now()
+
+    snapshot_entry =
+      log_entry(
+        now,
+        "snapshot",
+        "#{progress_snapshot.running_jobs || 0} running, #{progress_snapshot.queued_jobs || 0} queued, #{progress_snapshot.pending_sources || 0} pending"
+      )
+
+    process_entries =
+      processes
+      |> Enum.take(8)
+      |> Enum.map(fn process ->
+        log_entry(
+          process.last_updated_at || process.started_at || now,
+          "process",
+          "#{atom_to_status_text(process.status)} #{process.process_name} [run #{short_id(process.process_run_id)}]"
+        )
+      end)
+
+    event_entries =
+      process_events
+      |> Enum.reverse()
+      |> Enum.take(10)
+      |> Enum.reverse()
+      |> Enum.map(fn event ->
+        log_entry(
+          event.inserted_at || now,
+          "event",
+          "#{event.state} #{event.decision_action || "updated"} [event #{short_id(event.id)}]"
+        )
+      end)
+
+    pending_entries =
+      pending_sources
+      |> Enum.take(3)
+      |> Enum.map(fn source ->
+        log_entry(
+          source.inserted_at || now,
+          "queue",
+          "next source #{source.title} [src #{short_id(source.id)}]"
+        )
+      end)
+
+    [snapshot_entry | process_entries ++ event_entries ++ pending_entries]
+    |> Enum.sort_by(&DateTime.to_unix(&1.timestamp, :microsecond))
+    |> Enum.take(-120)
+  end
+
+  defp log_entry(timestamp, category, message) do
+    %{
+      timestamp: normalize_timestamp(timestamp),
+      category: category,
+      message: message
+    }
+  end
+
+  defp normalize_timestamp(%DateTime{} = timestamp), do: timestamp
+  defp normalize_timestamp(_), do: DateTime.utc_now()
+
+  defp llm_operation_label(%{llm_prompt: prompt}) when is_binary(prompt) do
+    cond do
+      String.contains?(prompt, "Write a Leythers-style rugby article") ->
+        "Generate article draft"
+
+      String.contains?(prompt, "Determine if two rugby headlines describe the same core story event") ->
+        "Compare headlines for same story"
+
+      String.contains?(prompt, "Score homepage importance from 0 to 100") ->
+        "Score homepage importance"
+
+      true ->
+        "Custom prompt operation"
+    end
+  end
+
+  defp llm_operation_label(_event), do: "Not available"
 
   defp ingestion_event?(%{worker: worker}) when is_binary(worker) do
     String.contains?(worker, "Ingestion")
