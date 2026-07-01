@@ -210,6 +210,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             error_summary: inspect(reason)
           })
 
+          # Mark sources as processed to avoid infinite loop on validation errors
+          mark_sources_processed(source_ids)
+
           {:ok, 0}
       end
     else
