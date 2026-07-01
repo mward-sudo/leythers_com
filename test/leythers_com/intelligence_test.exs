@@ -1,4 +1,5 @@
 defmodule LeythersCom.IntelligenceTest do
+  @moduledoc false
   use LeythersCom.DataCase, async: true
 
   import Ecto.Query

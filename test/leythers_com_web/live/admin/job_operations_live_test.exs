@@ -1,4 +1,5 @@
 defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
+  @moduledoc false
   use LeythersComWeb.ConnCase, async: true
 
   import Ecto.Query

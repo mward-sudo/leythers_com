@@ -1,4 +1,5 @@
 defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
+  @moduledoc false
   use LeythersCom.DataCase, async: true
 
   alias LeythersCom.Content
@@ -9,6 +10,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
   alias LeythersCom.Intelligence.SourceEditorialWorker
 
   defmodule FakeDraftAdapter do
+    @moduledoc false
     @behaviour LeythersCom.Intelligence.LLMClient
 
     @impl true
