@@ -99,13 +99,26 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     progress_snapshot = Intelligence.job_operations_progress_snapshot()
     live_pending_sources = Intelligence.pending_editorial_sources(3)
 
+    # Fetch recent events from running processes to show detailed LLM operations in log
+    recent_process_events =
+      if expanded_process_id do
+        process_events
+      else
+        # Get events from the most recently active processes for detailed log display
+        processes_page.entries
+        |> Enum.take(5)
+        |> Enum.flat_map(&Intelligence.process_events(&1.process_run_id))
+        |> Enum.sort_by(& &1.inserted_at, {:desc, DateTime})
+        |> Enum.take(20)
+      end
+
     live_activity = build_live_activity(progress_snapshot, processes_page.entries, live_pending_sources)
 
     live_activity_text =
       "Active now: #{Enum.join(live_activity.active_now, ", ")} | Up next: #{Enum.join(live_activity.up_next, ", ")}"
 
     log_entries =
-      build_log_entries(progress_snapshot, processes_page.entries, process_events, live_pending_sources)
+      build_log_entries(progress_snapshot, processes_page.entries, recent_process_events, live_pending_sources)
 
     query_params =
       params
@@ -436,7 +449,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
                 <div class="space-y-1.5 font-mono text-xs leading-relaxed">
                   <%= for entry <- @log_entries do %>
                     <p class="text-base-content/80">
-                      <span class="text-base-content/50">[{format_datetime(entry.timestamp)}]</span>
+                      <span class="text-base-content/50">[{format_log_time(entry.timestamp)}]</span>
                       <span class="font-semibold text-base-content/60">{entry.category}</span>
                       <span>{entry.message}</span>
                     </p>
@@ -863,6 +876,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   defp format_datetime(%DateTime{} = dt), do: Calendar.strftime(dt, "%Y-%m-%d %H:%M")
   defp format_datetime(_), do: "-"
 
+  defp format_log_time(%DateTime{} = dt), do: Calendar.strftime(dt, "%H:%M:%S")
+  defp format_log_time(_), do: "-"
+
   defp source_inputs(%{"sources" => sources}) when is_list(sources), do: sources
   defp source_inputs(%{"items" => items}) when is_list(items), do: items
   defp source_inputs(%{"feed" => feed}) when is_map(feed), do: [feed]
@@ -895,10 +911,17 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       |> Enum.take(10)
       |> Enum.reverse()
       |> Enum.map(fn event ->
+        operation = llm_operation_label(event)
+        message =
+          if operation do
+            "#{event.state} #{operation} [event #{short_id(event.id)}]"
+          else
+            "#{event.state} #{event.decision_action || "updated"} [event #{short_id(event.id)}]"
+          end
         log_entry(
           event.inserted_at || now,
           "event",
-          "#{event.state} #{event.decision_action || "updated"} [event #{short_id(event.id)}]"
+          message
         )
       end)
 
@@ -940,12 +963,19 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       String.contains?(prompt, "Score homepage importance from 0 to 100") ->
         "Score homepage importance"
 
+      String.contains?(prompt, "rugby") or String.contains?(prompt, "article") ->
+        "Process article"
+
       true ->
-        "Custom prompt operation"
+        nil
     end
   end
 
-  defp llm_operation_label(_event), do: "Not available"
+  defp llm_operation_label(%{decision_action: action}) when is_binary(action) and action != "" do
+    action
+  end
+
+  defp llm_operation_label(_event), do: nil
 
   defp ingestion_event?(%{worker: worker}) when is_binary(worker) do
     String.contains?(worker, "Ingestion")
