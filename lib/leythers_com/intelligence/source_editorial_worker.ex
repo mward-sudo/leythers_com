@@ -16,7 +16,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.LLMClient
-  alias LeythersCom.Intelligence.SourceClusterer
   alias LeythersCom.Repo
 
   @default_batch_size 20
@@ -26,6 +25,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_enqueue_unique_seconds 3_600
   @default_worker_timeout_ms :timer.minutes(10)
   @default_dispatch_delay_ms 2_000
+  @default_dispatch_delay_max_ms 15_000
   @default_retry_base_seconds 1
   @default_retry_max_seconds 15
   @default_retry_persist_threshold 3
@@ -37,7 +37,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       unique: [
         fields: [:worker],
         period: enqueue_unique_seconds(),
-        states: [:available, :scheduled, :executing]
+        # Keep scheduled dispatch continuations from blocking immediate catch-up dispatches.
+        states: [:available, :executing]
       ]
     )
     |> Oban.insert()
@@ -98,7 +99,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
       _ ->
         pending_sources
-        |> cluster_sources()
+        |> Enum.map(&[&1])
         |> Enum.reduce_while(:ok, fn cluster, :ok ->
           case enqueue_cluster_task(cluster, run_id) do
             {:ok, _job} -> {:cont, :ok}
@@ -590,12 +591,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> length()
   end
 
-  defp cluster_sources(sources) do
-    # Use aggressive semantic clustering to group sources on the same topic
-    # This prevents generating multiple articles for the same subject
-    SourceClusterer.cluster_by_topic(sources)
-  end
-
   defp auto_generation_enabled? do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
@@ -652,10 +647,24 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp dispatch_delay_ms do
+    max_delay_ms =
+      :leythers_com
+      |> Application.get_env(:intelligence_generation, [])
+      |> Keyword.get(:source_editorial_dispatch_delay_max_ms, @default_dispatch_delay_max_ms)
+      |> normalize_non_negative_int(@default_dispatch_delay_max_ms)
+
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:source_editorial_dispatch_delay_ms, @default_dispatch_delay_ms)
+    |> normalize_non_negative_int(@default_dispatch_delay_ms)
+    |> min(max_delay_ms)
   end
+
+  defp normalize_non_negative_int(value, _default)
+       when is_integer(value) and value >= 0,
+       do: value
+
+  defp normalize_non_negative_int(_value, default), do: default
 
   defp retry_base_seconds do
     :leythers_com

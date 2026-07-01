@@ -15,6 +15,7 @@ defmodule LeythersCom.Application do
       LeythersCom.Repo,
       {DNSCluster, query: Application.get_env(:leythers_com, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: LeythersCom.PubSub},
+      {Task.Supervisor, name: LeythersCom.TaskSupervisor},
       LeythersCom.Intelligence.LLMGuard,
       LeythersCom.Intelligence.JobOperationsUpdates,
       {Oban, Application.fetch_env!(:leythers_com, Oban)},
@@ -50,7 +51,7 @@ defmodule LeythersCom.Application do
     test_mode? = Keyword.get(oban_config, :testing) == :inline
 
     if not test_mode? do
-      Task.start(fn ->
+      Task.Supervisor.start_child(LeythersCom.TaskSupervisor, fn ->
         _ = Intelligence.recover_source_editorial_work()
       end)
     end

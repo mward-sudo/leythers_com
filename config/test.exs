@@ -36,6 +36,9 @@ config :logger, level: :warning
 # Disable Oban queues and plugins in test
 config :leythers_com, Oban, testing: :inline
 
+config :leythers_com, LeythersCom.Scheduler,
+  jobs: []
+
 config :leythers_com, :homepage_ranking,
   llm_enabled: false,
   llm_candidate_limit: 0,

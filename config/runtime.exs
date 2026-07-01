@@ -82,7 +82,7 @@ if config_env() == :prod do
     ],
     queues: [
       default: env_int.("OBAN_QUEUE_DEFAULT", 5),
-      ingestion: env_int.("OBAN_QUEUE_INGESTION", 2),
+      ingestion: env_int.("OBAN_QUEUE_INGESTION", 1),
       intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 1)
     ]
 

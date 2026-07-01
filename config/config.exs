@@ -134,6 +134,8 @@ config :leythers_com, :intelligence_generation,
   max_batches_per_run: 20,
   source_editorial_enqueue_unique_seconds: 3600,
   source_editorial_worker_timeout_ms: 600_000,
+  source_editorial_dispatch_delay_ms: 2_000,
+  source_editorial_dispatch_delay_max_ms: 15_000,
   source_editorial_retry_base_seconds: 1,
   source_editorial_retry_max_seconds: 15,
   source_editorial_retry_persist_threshold: 3,
@@ -152,7 +154,7 @@ config :phoenix, :json_library, Jason
 config :leythers_com, Oban,
   repo: LeythersCom.Repo,
   plugins: [Oban.Plugins.Pruner, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(30)}],
-  queues: [default: 10, ingestion: 5, intelligence: 2]
+  queues: [default: 10, ingestion: 1, intelligence: 2]
 
 # Configure real web feeds for ingestion
 config :leythers_com, :ingestion_feeds, [
@@ -186,9 +188,9 @@ config :leythers_com, :ingestion_monitoring,
 config :leythers_com, LeythersCom.Scheduler,
   jobs: [
     {"@daily", {LeythersCom.Ingestion.SourceLinkHealthChecker, :check_all_raw_sources, []}},
-    {"*/30 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}},
+    {"*/10 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}},
     {"@hourly", {LeythersCom.Ingestion, :refresh_stale_feeds, []}},
-    {"*/10 * * * *", {LeythersCom.Intelligence.SourceEditorialWorker, :enqueue, [%{}]}}
+    {"*/1 * * * *", {LeythersCom.Intelligence.SourceEditorialWorker, :enqueue, [%{"drain_backlog" => true}]}}
   ]
 
 # Import environment specific config. This must remain at the bottom
