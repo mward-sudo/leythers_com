@@ -129,12 +129,24 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> Repo.all()
   end
 
-  defp maybe_enqueue_dispatch_continuation(_job, _pending_sources, _source_limit, _max_batches, false),
-    do: :ok
+  defp maybe_enqueue_dispatch_continuation(
+         _job,
+         _pending_sources,
+         _source_limit,
+         _max_batches,
+         false
+       ),
+       do: :ok
 
-  defp maybe_enqueue_dispatch_continuation(_job, _pending_sources, _source_limit, max_batches, _drain_backlog?)
+  defp maybe_enqueue_dispatch_continuation(
+         _job,
+         _pending_sources,
+         _source_limit,
+         max_batches,
+         _drain_backlog?
+       )
        when max_batches <= 1,
-    do: :ok
+       do: :ok
 
   defp maybe_enqueue_dispatch_continuation(_job, pending_sources, source_limit, max_batches, true) do
     if length(pending_sources) < source_limit do

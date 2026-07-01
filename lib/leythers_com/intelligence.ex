@@ -1114,8 +1114,11 @@ defmodule LeythersCom.Intelligence do
       String.contains?(worker, "SourceEditorialWorker") ->
         :editorial_dispatch
 
-      String.contains?(worker, "FetchRssFeedWorker") -> :ingestion
-      true -> :other
+      String.contains?(worker, "FetchRssFeedWorker") ->
+        :ingestion
+
+      true ->
+        :other
     end
   end
 

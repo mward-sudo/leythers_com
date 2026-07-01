@@ -179,12 +179,32 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
   defp normalize_opts(opts) when is_list(opts), do: opts
 
   defp normalize_opts(opts) when is_map(opts) do
-    allowed = MapSet.new([:source_limit, :homepage_size, :refresh_cooldown_seconds, :prompt_version, :llm_enabled, :llm_candidate_limit, :llm_cooldown_seconds, :llm_timeout_ms, :recency_weight, :importance_weight, :max_age_hours, :importance_generator, :llm_retry_base_ms, :llm_retry_max_ms, :async, :triggered_by])
+    allowed =
+      MapSet.new([
+        :source_limit,
+        :homepage_size,
+        :refresh_cooldown_seconds,
+        :prompt_version,
+        :llm_enabled,
+        :llm_candidate_limit,
+        :llm_cooldown_seconds,
+        :llm_timeout_ms,
+        :recency_weight,
+        :importance_weight,
+        :max_age_hours,
+        :importance_generator,
+        :llm_retry_base_ms,
+        :llm_retry_max_ms,
+        :async,
+        :triggered_by
+      ])
 
     Enum.reduce(opts, [], fn {k, v}, acc ->
       key =
         case k do
-          key when is_atom(key) -> key
+          key when is_atom(key) ->
+            key
+
           key when is_binary(key) ->
             case safe_to_existing_atom(key) do
               {:ok, atom_key} -> atom_key

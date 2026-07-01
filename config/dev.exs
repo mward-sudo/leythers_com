@@ -36,8 +36,7 @@ config :leythers_com,
   llm_comparison_timeout_ms: 60_000
 
 # In dev, run intelligence jobs one-at-a-time so LLM calls queue naturally.
-config :leythers_com, Oban,
-  queues: [intelligence: 1]
+config :leythers_com, Oban, queues: [intelligence: 1]
 
 # Use a gradual circuit cooldown ramp for local Ollama to avoid burst/recover churn.
 config :leythers_com, :llm_guard,

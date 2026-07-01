@@ -119,7 +119,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
   end
 
   test "returns retryable error when llm draft generation is unavailable" do
-    Application.put_env(:leythers_com, :llm, adapter: UnavailableDraftAdapter, model: "unavailable")
+    Application.put_env(:leythers_com, :llm,
+      adapter: UnavailableDraftAdapter,
+      model: "unavailable"
+    )
 
     Application.put_env(:leythers_com, :intelligence_generation,
       auto_generation_enabled: true,
