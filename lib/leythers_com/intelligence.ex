@@ -665,17 +665,17 @@ defmodule LeythersCom.Intelligence do
 
   def job_operations_progress_snapshot do
     running_jobs =
-      from(job in "oban_jobs",
-        where: job.state == "executing",
-        select: count(job.id)
-      )
+      Job
+      |> job_operations_scope()
+      |> where([job], job.state == "executing")
+      |> select([job], count(job.id))
       |> Repo.one()
 
     queued_jobs =
-      from(job in "oban_jobs",
-        where: job.state in ["available", "scheduled", "retryable"],
-        select: count(job.id)
-      )
+      Job
+      |> job_operations_scope()
+      |> where([job], job.state in ["available", "scheduled", "retryable"])
+      |> select([job], count(job.id))
       |> Repo.one()
 
     pending_sources =
