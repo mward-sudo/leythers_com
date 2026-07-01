@@ -34,6 +34,16 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     end
   end
 
+  defmodule UnavailableDraftAdapter do
+    @moduledoc false
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(_prompt, _opts) do
+      {:error, {:request_failed, 500, %{"error" => "upstream unavailable"}}}
+    end
+  end
+
   setup do
     original_generation_config = Application.get_env(:leythers_com, :intelligence_generation)
     original_llm_config = Application.get_env(:leythers_com, :llm)
@@ -106,6 +116,43 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     refute article.body =~ "<"
     refute article.summary =~ "&nbsp;"
     refute article.body =~ "&nbsp;"
+  end
+
+  test "returns retryable error when llm draft generation is unavailable" do
+    Application.put_env(:leythers_com, :llm, adapter: UnavailableDraftAdapter, model: "unavailable")
+
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: true,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, _source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh model unavailable test",
+        url: "https://example.com/llm-unavailable-test",
+        body_summary: "Source summary while upstream is unavailable.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 08:45:00.000000Z]
+      })
+
+    assert {:error, {:llm_unavailable, {:request_failed, 500, _}}} =
+             SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert ai_articles == []
+
+    [source] = Ingestion.list_raw_sources(status: "pending")
+    assert source.title =~ "unavailable"
   end
 
   test "uses configured worker timeout for execution guard" do

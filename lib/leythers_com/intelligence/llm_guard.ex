@@ -10,6 +10,9 @@ defmodule LeythersCom.Intelligence.LLMGuard do
 
   @default_failure_threshold 4
   @default_open_cooldown_ms 30_000
+  @default_open_cooldown_min_ms 2_000
+  @default_open_cooldown_step_ms 2_000
+  @default_open_cooldown_max_ms 30_000
 
   @type state :: %{
           consecutive_failures: non_neg_integer(),
@@ -71,7 +74,7 @@ defmodule LeythersCom.Intelligence.LLMGuard do
 
     next_state =
       if failures >= threshold do
-        cooldown_ms = config(:open_cooldown_ms, @default_open_cooldown_ms)
+        cooldown_ms = cooldown_ms(failures, threshold)
         %{consecutive_failures: failures, open_until_ms: now_ms() + cooldown_ms}
       else
         %{state | consecutive_failures: failures}
@@ -84,6 +87,34 @@ defmodule LeythersCom.Intelligence.LLMGuard do
     :leythers_com
     |> Application.get_env(:llm_guard, [])
     |> Keyword.get(key, default)
+  end
+
+  defp cooldown_ms(failures, threshold) do
+    # Keep backwards compatibility when fixed cooldown is explicitly configured.
+    guard_config = Application.get_env(:leythers_com, :llm_guard, [])
+
+    cond do
+      progressive_backoff_configured?(guard_config) ->
+        progressive_cooldown_ms(guard_config, failures, threshold)
+
+      true ->
+        Keyword.get(guard_config, :open_cooldown_ms, @default_open_cooldown_ms)
+    end
+  end
+
+  defp progressive_backoff_configured?(guard_config) do
+    Keyword.has_key?(guard_config, :open_cooldown_min_ms) or
+      Keyword.has_key?(guard_config, :open_cooldown_step_ms) or
+      Keyword.has_key?(guard_config, :open_cooldown_max_ms)
+  end
+
+  defp progressive_cooldown_ms(guard_config, failures, threshold) do
+    min_ms = Keyword.get(guard_config, :open_cooldown_min_ms, @default_open_cooldown_min_ms)
+    step_ms = Keyword.get(guard_config, :open_cooldown_step_ms, @default_open_cooldown_step_ms)
+    max_ms = Keyword.get(guard_config, :open_cooldown_max_ms, @default_open_cooldown_max_ms)
+
+    overflow_failures = max(failures - threshold, 0)
+    min(min_ms + overflow_failures * step_ms, max_ms)
   end
 
   defp now_ms, do: System.monotonic_time(:millisecond)

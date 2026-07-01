@@ -66,6 +66,7 @@ defmodule LeythersCom.MixProject do
        depth: 1},
       {:swoosh, "~> 1.16"},
       {:req, "~> 0.5"},
+      {:hammer, "~> 6.2"},
       {:oban, "~> 2.19"},
       {:quantum, "~> 3.0"},
       {:floki, ">= 0.36.0"},

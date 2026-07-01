@@ -103,7 +103,7 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
 
     case run_with_timeout(fn -> generator.(entry) end, timeout_ms) do
       {:ok, score} -> {:llm_generated, score}
-      :timeout -> {:deterministic, deterministic_importance(entry)}
+      :timeout -> raise "llm_unavailable: timeout"
     end
   end
 
@@ -113,13 +113,16 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
 
     case run_with_timeout(fn -> LLMClient.generate(prompt) end, timeout_ms) do
       {:ok, {:ok, %{text: text}}} ->
-        {:llm_generated, parse_importance_score(text) || deterministic_importance(entry)}
+        case parse_importance_score(text) do
+          nil -> raise "llm_unavailable: invalid_importance_response"
+          parsed_score -> {:llm_generated, parsed_score}
+        end
 
-      {:ok, {:error, _reason}} ->
-        {:deterministic, deterministic_importance(entry)}
+      {:ok, {:error, reason}} ->
+        raise "llm_unavailable: #{inspect(reason)}"
 
       :timeout ->
-        {:deterministic, deterministic_importance(entry)}
+        raise "llm_unavailable: timeout"
     end
   end
 

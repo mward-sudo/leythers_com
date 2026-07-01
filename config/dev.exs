@@ -35,6 +35,23 @@ config :leythers_com, LeythersComWeb.Endpoint,
 config :leythers_com,
   llm_comparison_timeout_ms: 60_000
 
+# In dev, run intelligence jobs one-at-a-time so LLM calls queue naturally.
+config :leythers_com, Oban,
+  queues: [intelligence: 1]
+
+# Use a gradual circuit cooldown ramp for local Ollama to avoid burst/recover churn.
+config :leythers_com, :llm_guard,
+  open_cooldown_min_ms: 1_500,
+  open_cooldown_step_ms: 1_500,
+  open_cooldown_max_ms: 20_000
+
+config :leythers_com, :llm_rate_limit,
+  enabled: true,
+  key: "llm:dev",
+  scale_ms: 1_000,
+  limit: 2,
+  max_wait_ms: 30_000
+
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed

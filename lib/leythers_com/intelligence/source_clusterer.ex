@@ -67,8 +67,6 @@ defmodule LeythersCom.Intelligence.SourceClusterer do
     else
       keyword_similar_fallback?(source_a.title, source_b.title)
     end
-  rescue
-    _ -> false
   end
 
   defp call_llm_for_similarity(title_a, content_a, title_b, content_b) do
@@ -76,7 +74,8 @@ defmodule LeythersCom.Intelligence.SourceClusterer do
 
     case run_with_timeout(fn -> LLMClient.generate(prompt) end, llm_comparison_timeout_ms()) do
       {:ok, {:ok, %{text: text}}} -> parse_llm_response(text)
-      _ -> false
+      {:ok, {:error, reason}} -> raise "llm_unavailable: #{inspect(reason)}"
+      :timeout -> raise "llm_unavailable: timeout"
     end
   end
 

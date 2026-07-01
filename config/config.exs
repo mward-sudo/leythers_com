@@ -76,6 +76,9 @@ config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",
   metadata: [:request_id]
 
+config :hammer,
+  backend: {Hammer.Backend.ETS, [expiry_ms: 120_000, cleanup_interval_ms: 5_000]}
+
 # Configure intelligence budget guardrails
 config :leythers_com, :intelligence_budget, monthly_cap_gbp: "10.00"
 
@@ -107,6 +110,13 @@ config :leythers_com, :homepage_ranking,
 config :leythers_com, :llm_guard,
   failure_threshold: 4,
   open_cooldown_ms: 30_000
+
+config :leythers_com, :llm_rate_limit,
+  enabled: false,
+  key: "llm:global",
+  scale_ms: 1_000,
+  limit: 2,
+  max_wait_ms: 10_000
 
 config :leythers_com, :editorial_orchestration,
   source_limit: 20,

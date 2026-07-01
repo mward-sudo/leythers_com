@@ -62,14 +62,14 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
     refute_receive :importance_called
   end
 
-  test "falls back to deterministic scoring when importance generation times out" do
+  test "raises when importance generation times out" do
     blocking_generator = fn _entry ->
       receive do
         :never -> :ok
       end
     end
 
-    [ranked_entry] =
+    assert_raise RuntimeError, ~r/^llm_unavailable:/, fn ->
       HomepageRanker.rank(
         [entry("Slow", DateTime.utc_now(), [1, 2])],
         llm_enabled: true,
@@ -77,9 +77,7 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
         llm_timeout_ms: 10,
         importance_generator: blocking_generator
       )
-
-    assert ranked_entry.importance_source == :deterministic
-    assert ranked_entry.importance_score == 70
+    end
   end
 
   test "prioritizes source publication timestamp for recency scoring" do

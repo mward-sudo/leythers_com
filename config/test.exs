@@ -68,6 +68,9 @@ config :leythers_com, :intelligence_generation,
 config :leythers_com,
   regeneration_enqueue_worker: false
 
+config :leythers_com, :llm_rate_limit,
+  enabled: false
+
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime
 

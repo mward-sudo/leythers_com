@@ -99,6 +99,13 @@ if config_env() == :prod do
     failure_threshold: env_int.("LLM_GUARD_FAILURE_THRESHOLD", 4),
     open_cooldown_ms: env_int.("LLM_GUARD_OPEN_COOLDOWN_MS", 30_000)
 
+  config :leythers_com, :llm_rate_limit,
+    enabled: env_bool.("LLM_RATE_LIMIT_ENABLED", true),
+    key: System.get_env("LLM_RATE_LIMIT_KEY") || "llm:global",
+    scale_ms: env_int.("LLM_RATE_LIMIT_SCALE_MS", 1_000),
+    limit: env_int.("LLM_RATE_LIMIT_LIMIT", 2),
+    max_wait_ms: env_int.("LLM_RATE_LIMIT_MAX_WAIT_MS", 10_000)
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want

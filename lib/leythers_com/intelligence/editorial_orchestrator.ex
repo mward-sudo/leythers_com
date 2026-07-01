@@ -18,7 +18,9 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
     homepage_size: 12,
     refresh_cooldown_seconds: 300,
     async_source_refresh: true,
-    prompt_version: "homepage_ranker_v1"
+    prompt_version: "homepage_ranker_v1",
+    llm_retry_base_ms: 2_000,
+    llm_retry_max_ms: 60_000
   ]
 
   def refresh_homepage_layout(opts \\ []) do
@@ -146,7 +148,7 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
 
       Task.start(fn ->
         try do
-          _ = refresh_homepage_layout(Keyword.put(opts, :triggered_by, :source_update))
+          _ = retry_refresh_with_backoff(Keyword.put(opts, :triggered_by, :source_update))
         after
           mark_refresh_finished()
         end
@@ -163,11 +165,41 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
       mark_refresh_started(now)
 
       try do
-        refresh_homepage_layout(Keyword.put(opts, :triggered_by, :source_update))
+        retry_refresh_with_backoff(Keyword.put(opts, :triggered_by, :source_update))
       after
         mark_refresh_finished()
       end
     end
+  end
+
+  defp retry_refresh_with_backoff(opts, attempt \\ 1) do
+    try do
+      refresh_homepage_layout(opts)
+    rescue
+      error ->
+        if llm_unavailable_error?(error) do
+          Process.sleep(refresh_retry_delay_ms(opts, attempt))
+          retry_refresh_with_backoff(opts, attempt + 1)
+        else
+          reraise error, __STACKTRACE__
+        end
+    end
+  end
+
+  defp llm_unavailable_error?(%RuntimeError{message: message}) when is_binary(message) do
+    String.starts_with?(message, "llm_unavailable:")
+  end
+
+  defp llm_unavailable_error?(_error), do: false
+
+  defp refresh_retry_delay_ms(opts, attempt) do
+    cfg = config() |> Keyword.merge(opts)
+    base_ms = Keyword.get(cfg, :llm_retry_base_ms, 2_000) |> max(1)
+    max_ms = Keyword.get(cfg, :llm_retry_max_ms, 60_000) |> max(base_ms)
+
+    base_ms
+    |> Kernel.*(trunc(:math.pow(2, max(attempt - 1, 0))))
+    |> min(max_ms)
   end
 
   defp latest_run_id do
