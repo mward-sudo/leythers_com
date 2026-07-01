@@ -16,15 +16,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.LLMClient
-  alias LeythersCom.Intelligence.StorySimilarity
+  alias LeythersCom.Intelligence.SourceClusterer
   alias LeythersCom.Repo
 
   @default_batch_size 20
   @default_max_batches_per_run 20
   @default_significance_threshold 70
   @default_prompt_version "source_editorial_v1"
-  @default_llm_grouping_min_jaccard 0.0
-  @default_grouping_llm_timeout_ms 1_200
   @default_enqueue_unique_seconds 3_600
   @default_worker_timeout_ms :timer.minutes(10)
 
@@ -499,95 +497,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp cluster_sources(sources) do
-    Enum.reduce(sources, [], fn source, clusters ->
-      add_to_best_matching_cluster(clusters, source)
-    end)
-  end
-
-  defp add_to_best_matching_cluster([], source), do: [[source]]
-
-  defp add_to_best_matching_cluster(clusters, source) do
-    {updated_clusters, matched?} =
-      Enum.reduce(clusters, {[], false}, fn cluster, {acc, matched} ->
-        should_merge? =
-          not matched and
-            Enum.any?(cluster, fn cluster_source ->
-              similar_titles?(cluster_source.title, source.title)
-            end)
-
-        if should_merge? do
-          {[cluster ++ [source] | acc], true}
-        else
-          {[cluster | acc], matched}
-        end
-      end)
-
-    if matched? do
-      Enum.reverse(updated_clusters)
-    else
-      Enum.reverse([[source] | updated_clusters])
-    end
-  end
-
-  defp similar_titles?(title_a, title_b) do
-    if StorySimilarity.similar?(title_a, title_b) do
-      true
-    else
-      similarity_score = StorySimilarity.score(title_a, title_b)
-
-      llm_grouping_enabled?() and
-        similarity_score >= llm_grouping_min_jaccard() and
-        llm_grouping_similar?(title_a, title_b)
-    end
-  end
-
-  defp llm_grouping_similar?(title_a, title_b) do
-    case grouping_similarity_classifier() do
-      classifier when is_function(classifier, 2) ->
-        classifier.(title_a, title_b)
-
-      _ ->
-        llm_grouping_similar_via_client?(title_a, title_b)
-    end
-  end
-
-  defp llm_grouping_similar_via_client?(title_a, title_b) do
-    prompt = grouping_prompt(title_a, title_b)
-
-    case run_with_timeout(fn -> LLMClient.generate(prompt) end, grouping_llm_timeout_ms()) do
-      {:ok, {:ok, %{text: text}}} -> parse_grouping_response(text)
-      _ -> false
-    end
-  end
-
-  defp grouping_prompt(title_a, title_b) do
-    """
-    Determine if two rugby headlines describe the same core story event.
-    Reply with exactly one token: YES or NO.
-
-    Headline A: #{title_a}
-    Headline B: #{title_b}
-    """
-  end
-
-  defp parse_grouping_response(text) when is_binary(text) do
-    normalized =
-      text
-      |> String.trim()
-      |> String.upcase()
-
-    String.starts_with?(normalized, "YES")
-  end
-
-  defp parse_grouping_response(_), do: false
-
-  defp run_with_timeout(fun, timeout_ms) do
-    task = Task.async(fun)
-
-    case Task.yield(task, timeout_ms) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> {:ok, result}
-      _ -> :timeout
-    end
+    # Use aggressive semantic clustering to group sources on the same topic
+    # This prevents generating multiple articles for the same subject
+    SourceClusterer.cluster_by_topic(sources)
   end
 
   defp auto_generation_enabled? do
@@ -600,30 +512,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:llm_draft_enabled, true)
-  end
-
-  defp llm_grouping_enabled? do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:llm_grouping_enabled, true)
-  end
-
-  defp llm_grouping_min_jaccard do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:llm_grouping_min_jaccard, @default_llm_grouping_min_jaccard)
-  end
-
-  defp grouping_llm_timeout_ms do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:grouping_llm_timeout_ms, @default_grouping_llm_timeout_ms)
-  end
-
-  defp grouping_similarity_classifier do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:grouping_similarity_classifier)
   end
 
   defp llm_cost_per_1k_tokens_gbp do

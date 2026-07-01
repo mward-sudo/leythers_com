@@ -24,6 +24,16 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     end
   end
 
+  defmodule FakeClusteringAdapter do
+    @moduledoc false
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(_prompt, _opts) do
+      {:ok, %{text: "SAME", model: "fake-clustering"}}
+    end
+  end
+
   setup do
     original_generation_config = Application.get_env(:leythers_com, :intelligence_generation)
     original_llm_config = Application.get_env(:leythers_com, :llm)
@@ -383,6 +393,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
   end
 
   test "uses optional llm grouping for borderline headline similarity" do
+    Application.put_env(:leythers_com, :llm,
+      adapter: FakeClusteringAdapter,
+      model: "fake-clustering"
+    )
+
     Application.put_env(:leythers_com, :intelligence_generation,
       auto_generation_enabled: true,
       source_batch_size: 20,
