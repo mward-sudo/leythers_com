@@ -91,9 +91,7 @@
           {Credo.Check.Warning.UnusedRegexOperation, []},
           {Credo.Check.Warning.UnusedStringOperation, []},
           {Credo.Check.Warning.UnusedTupleOperation, []},
-          {Credo.Check.Warning.WrongTestFilename, []}
-        ],
-        disabled: [
+          {Credo.Check.Warning.WrongTestFilename, []},
           {Credo.Check.Refactor.UtcNowTruncate, []},
           {Credo.Check.Consistency.MultiAliasImportRequireUse, []},
           {Credo.Check.Consistency.UnusedVariableNames, []},
@@ -121,7 +119,8 @@
           {Credo.Check.Refactor.MapMap, []},
           {Credo.Check.Refactor.ModuleDependencies, []},
           {Credo.Check.Refactor.NegatedIsNil, []}
-        ]
+        ],
+        disabled: []
       }
     }
   ]
