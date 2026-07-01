@@ -25,7 +25,7 @@ defmodule LeythersCom.Content.ArticleOutputTest do
 
     test "rejects headline without Leigh angle" do
       issues = ArticleOutput.validate_headline("Manchester Derby Heats Up")
-      assert Enum.any?(issues, &String.contains?(&1, "Leigh angle"))
+      assert Enum.any?(issues, &String.contains?(&1, "Leigh perspective"))
     end
 
     test "rejects headline exceeding max length" do
@@ -125,7 +125,7 @@ defmodule LeythersCom.Content.ArticleOutputTest do
         )
 
       {:error, issues} = ArticleOutput.validate(output)
-      assert Enum.any?(issues, &String.contains?(&1, "Leigh angle"))
+      assert Enum.any?(issues, &String.contains?(&1, "Leigh perspective"))
     end
 
     test "collects issues from summary validation" do

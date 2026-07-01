@@ -120,13 +120,31 @@ defmodule LeythersCom.Content.ArticleOutput do
   defp check_leigh_angle(issues, headline) do
     normalized = String.downcase(headline)
 
-    leigh_terms = ["leigh", "leopards", "rhinos"]
-    has_leigh = Enum.any?(leigh_terms, &String.contains?(normalized, &1))
+    # Check for Leigh PoV indicators: team name, possessive pronouns, or club-facing language
+    leigh_pov_terms = [
+      "leigh",
+      "leopards",
+      "rhinos",
+      "our",
+      "we ",
+      " we ",
+      "the club",
+      "sign",
+      "join",
+      "leave",
+      "away from"
+    ]
 
-    if has_leigh do
-      issues
-    else
-      ["headline must include Leigh angle or team reference" | issues]
+    has_leigh_pov = Enum.any?(leigh_pov_terms, &String.contains?(normalized, &1))
+
+    # Reject obviously non-Leigh perspective (player signs FOR someone else, not us)
+    third_party_terms = ["signs for another", "signs with another", "signs for the"]
+    has_third_party = Enum.any?(third_party_terms, &String.contains?(normalized, &1))
+
+    cond do
+      has_third_party -> ["headline must be from Leigh perspective, not third-party" | issues]
+      has_leigh_pov -> issues
+      true -> ["headline must reflect Leigh perspective or involvement" | issues]
     end
   end
 
