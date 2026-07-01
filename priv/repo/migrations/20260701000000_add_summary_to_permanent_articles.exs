@@ -1,4 +1,5 @@
 defmodule LeythersCom.Repo.Migrations.AddSummaryToPermanentArticles do
+  @moduledoc false
   use Ecto.Migration
 
   def change do

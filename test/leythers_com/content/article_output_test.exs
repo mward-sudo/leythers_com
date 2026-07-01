@@ -1,4 +1,5 @@
 defmodule LeythersCom.Content.ArticleOutputTest do
+  @moduledoc false
   use ExUnit.Case, async: true
 
   alias LeythersCom.Content.ArticleOutput
