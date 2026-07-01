@@ -46,8 +46,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
        }
      )
      |> assign(:live_activity_text, "Active now: none | Up next: none")
-      |> assign(:log_popover_open, false)
-      |> assign(:log_entries, [])
+     |> assign(:log_popover_open, false)
+     |> assign(:log_entries, [])
      |> assign(:selected_event_id, nil)
      |> assign(:selected_event, nil)}
   end
@@ -112,13 +112,19 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
         |> Enum.take(20)
       end
 
-    live_activity = build_live_activity(progress_snapshot, processes_page.entries, live_pending_sources)
+    live_activity =
+      build_live_activity(progress_snapshot, processes_page.entries, live_pending_sources)
 
     live_activity_text =
       "Active now: #{Enum.join(live_activity.active_now, ", ")} | Up next: #{Enum.join(live_activity.up_next, ", ")}"
 
     log_entries =
-      build_log_entries(progress_snapshot, processes_page.entries, recent_process_events, live_pending_sources)
+      build_log_entries(
+        progress_snapshot,
+        processes_page.entries,
+        recent_process_events,
+        live_pending_sources
+      )
 
     query_params =
       params
@@ -158,7 +164,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       active_now: if(active_process_labels == [], do: ["none"], else: active_process_labels),
       up_next: if(pending_source_labels == [], do: ["none"], else: pending_source_labels),
       more_up_next: more_up_next,
-      queue_context: "#{running_jobs} running, #{queued_jobs} queued, #{pending_sources_count} pending"
+      queue_context:
+        "#{running_jobs} running, #{queued_jobs} queued, #{pending_sources_count} pending"
     }
   end
 
@@ -421,7 +428,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
             phx-click="toggle-live-log"
           >
             <.icon name="hero-command-line" class="h-4 w-4" />
-            <%= if @log_popover_open, do: "Hide Live Log", else: "Live Log" %>
+            {if @log_popover_open, do: "Hide Live Log", else: "Live Log"}
           </button>
 
           <%= if @log_popover_open do %>
@@ -769,7 +776,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
         <%= if @event.llm_prompt do %>
           <div class="mt-3">
-            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">LLM operation</p>
+            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
+              LLM operation
+            </p>
             <p class="mt-1 text-sm font-semibold text-base-content">{llm_operation_label(@event)}</p>
           </div>
         <% end %>
@@ -905,25 +914,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
         )
       end)
 
-    event_entries =
-      process_events
-      |> Enum.reverse()
-      |> Enum.take(10)
-      |> Enum.reverse()
-      |> Enum.map(fn event ->
-        operation = llm_operation_label(event)
-        message =
-          if operation do
-            "#{event.state} #{operation} [event #{short_id(event.id)}]"
-          else
-            "#{event.state} #{event.decision_action || "updated"} [event #{short_id(event.id)}]"
-          end
-        log_entry(
-          event.inserted_at || now,
-          "event",
-          message
-        )
-      end)
+    event_entries = build_event_entries(process_events, now)
 
     pending_entries =
       pending_sources
@@ -939,6 +930,31 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
     [snapshot_entry | process_entries ++ event_entries ++ pending_entries]
     |> Enum.sort_by(&DateTime.to_unix(&1.timestamp, :microsecond))
     |> Enum.take(-120)
+  end
+
+  defp build_event_entries(process_events, now) do
+    process_events
+    |> Enum.reverse()
+    |> Enum.take(10)
+    |> Enum.reverse()
+    |> Enum.map(&format_event_entry(&1, now))
+  end
+
+  defp format_event_entry(event, now) do
+    operation = llm_operation_label(event)
+
+    message =
+      if operation do
+        "#{event.state} #{operation} [event #{short_id(event.id)}]"
+      else
+        "#{event.state} #{event.decision_action || "updated"} [event #{short_id(event.id)}]"
+      end
+
+    log_entry(
+      event.inserted_at || now,
+      "event",
+      message
+    )
   end
 
   defp log_entry(timestamp, category, message) do
@@ -957,7 +973,10 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
       String.contains?(prompt, "Write a Leythers-style rugby article") ->
         "Generate article draft"
 
-      String.contains?(prompt, "Determine if two rugby headlines describe the same core story event") ->
+      String.contains?(
+        prompt,
+        "Determine if two rugby headlines describe the same core story event"
+      ) ->
         "Compare headlines for same story"
 
       String.contains?(prompt, "Score homepage importance from 0 to 100") ->
