@@ -98,12 +98,24 @@ defmodule LeythersCom.Intelligence.LLMClientTest do
 
     assert {:ok, %{text: "echo: first", model: "fake"}} =
              LLMClient.generate("first",
-               rate_limit: [enabled: true, key: unique_key, scale_ms: 60_000, limit: 1, max_wait_ms: 0]
+               rate_limit: [
+                 enabled: true,
+                 key: unique_key,
+                 scale_ms: 60_000,
+                 limit: 1,
+                 max_wait_ms: 0
+               ]
              )
 
     assert {:error, :llm_rate_limited} =
              LLMClient.generate("second",
-               rate_limit: [enabled: true, key: unique_key, scale_ms: 60_000, limit: 1, max_wait_ms: 0]
+               rate_limit: [
+                 enabled: true,
+                 key: unique_key,
+                 scale_ms: 60_000,
+                 limit: 1,
+                 max_wait_ms: 0
+               ]
              )
   end
 end

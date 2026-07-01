@@ -17,7 +17,7 @@ defmodule LeythersCom.Intelligence.LLMClient.Ollama do
 
   def generate(prompt, opts, http_client) when is_binary(prompt) do
     endpoint = build_endpoint(opts)
-    model = opts[:model] || "qwen3:1.7b"
+    model = opts[:model] || "llama3.1:8b"
     timeout_ms = opts[:timeout_ms] || 30_000
     payload = build_payload(prompt, opts)
     log_requests? = opts[:log_requests] || false
@@ -44,7 +44,7 @@ defmodule LeythersCom.Intelligence.LLMClient.Ollama do
 
   defp build_payload(prompt, opts) do
     %{
-      model: opts[:model] || "qwen3:1.7b",
+      model: opts[:model] || "llama3.1:8b",
       prompt: prompt,
       stream: false,
       options: %{

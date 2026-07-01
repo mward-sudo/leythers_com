@@ -36,6 +36,8 @@ defmodule LeythersComWeb.Admin.OverviewLive do
     {:ok,
      socket
      |> assign(:page_title, "Admin Overview")
+     |> assign(:current_llm_provider, Intelligence.current_llm_provider())
+     |> assign(:llm_provider_switch_enabled, llm_provider_switch_enabled?())
      |> assign(:today, today)
      |> assign(:monthly_spend, monthly_spend)
      |> assign(:monthly_cap, monthly_cap)
@@ -44,6 +46,28 @@ defmodule LeythersComWeb.Admin.OverviewLive do
      |> assign(:recent_articles, recent_articles)
      |> assign(:recent_generation_decisions, recent_generation_decisions)
      |> assign(:failed_jobs, failed_jobs)}
+  end
+
+  @impl true
+  def handle_event("set-llm-provider", %{"provider" => provider}, socket) do
+    case Intelligence.set_dev_llm_provider(provider) do
+      {:ok, selected_provider} ->
+        {:noreply,
+         socket
+         |> assign(:current_llm_provider, selected_provider)
+         |> put_flash(:info, "LLM provider switched to #{selected_provider}")}
+
+      {:error, :unsupported_environment} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           "LLM provider switching is available in development only"
+         )}
+
+      _error ->
+        {:noreply, put_flash(socket, :error, "Unable to switch LLM provider")}
+    end
   end
 
   @impl true
@@ -108,6 +132,51 @@ defmodule LeythersComWeb.Admin.OverviewLive do
             ]}>
               {to_string(@budget_state)}
             </p>
+          </article>
+        </section>
+
+        <section class="mt-6" id="llm-provider-controls">
+          <article class="rounded-2xl border border-base-300 bg-base-100 p-5 shadow-sm">
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 class="text-lg font-semibold">LLM Provider</h2>
+                <p class="mt-1 text-sm text-base-content/70">
+                  Switch model provider for new LLM requests.
+                </p>
+                <p class="mt-2">
+                  <span class={["badge", provider_badge_class(@current_llm_provider)]}>
+                    current: {provider_label(@current_llm_provider)}
+                  </span>
+                </p>
+              </div>
+
+              <div class="flex items-center gap-2" id="llm-provider-buttons">
+                <button
+                  type="button"
+                  class={["btn btn-sm", @current_llm_provider == :openrouter && "btn-primary"]}
+                  phx-click="set-llm-provider"
+                  phx-value-provider="openrouter"
+                  disabled={not @llm_provider_switch_enabled}
+                >
+                  OpenRouter
+                </button>
+                <button
+                  type="button"
+                  class={["btn btn-sm", @current_llm_provider == :ollama && "btn-primary"]}
+                  phx-click="set-llm-provider"
+                  phx-value-provider="ollama"
+                  disabled={not @llm_provider_switch_enabled}
+                >
+                  Ollama
+                </button>
+              </div>
+            </div>
+
+            <%= if not @llm_provider_switch_enabled do %>
+              <p class="mt-3 text-xs text-base-content/60">
+                Provider switching is disabled outside development.
+              </p>
+            <% end %>
           </article>
         </section>
 
@@ -281,4 +350,16 @@ defmodule LeythersComWeb.Admin.OverviewLive do
   end
 
   defp format_decision_time(_), do: "-"
+
+  defp llm_provider_switch_enabled? do
+    Application.get_env(:leythers_com, :runtime_env, :dev) == :dev
+  end
+
+  defp provider_label(:openrouter), do: "OpenRouter"
+  defp provider_label(:ollama), do: "Ollama"
+  defp provider_label(other), do: to_string(other)
+
+  defp provider_badge_class(:openrouter), do: "badge-primary"
+  defp provider_badge_class(:ollama), do: "badge-accent"
+  defp provider_badge_class(_), do: "badge-neutral"
 end

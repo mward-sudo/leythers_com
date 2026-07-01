@@ -9,7 +9,7 @@ Our stack consists of:
 - Oban Community Edition for background queues
 - Quantum for cron jobs
 - Req + Floki for lightweight concurrent scraping
-- OpenAI API (gpt-4o-mini) with a strict monthly cost tracker
+- OpenAI API - OpenRouter (meta-llama/llama-3.1-8b-instruct) with a strict monthly cost tracker
 
 Repository alignment notes:
 

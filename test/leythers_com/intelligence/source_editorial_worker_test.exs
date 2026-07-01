@@ -262,6 +262,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       |> Enum.map(&Map.get(&1, "title"))
 
     assert length(snapshot_titles) == 1
+
     assert hd(snapshot_titles) in [
              "Leigh confirm squad update ahead of weekend",
              "Leigh confirm squad update ahead of derby"

@@ -1,5 +1,5 @@
 defmodule LeythersComWeb.Admin.OverviewLiveTest do
-  use LeythersComWeb.ConnCase, async: true
+  use LeythersComWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import Ecto.Query
@@ -18,6 +18,29 @@ defmodule LeythersComWeb.Admin.OverviewLiveTest do
 
   describe "index/0" do
     setup :register_and_log_in_user
+
+    setup do
+      runtime_env_original = Application.get_env(:leythers_com, :runtime_env)
+      llm_provider_original = Application.get_env(:leythers_com, :llm_provider)
+      llm_original = Application.get_env(:leythers_com, :llm)
+      llm_profiles_original = Application.get_env(:leythers_com, :llm_profiles)
+
+      Application.put_env(:leythers_com, :runtime_env, :dev)
+
+      Application.put_env(:leythers_com, :llm_profiles, %{
+        openrouter: [adapter: LeythersCom.Intelligence.LLMClient.OpenRouter],
+        ollama: [adapter: LeythersCom.Intelligence.LLMClient.Ollama]
+      })
+
+      on_exit(fn ->
+        reset_env(:runtime_env, runtime_env_original)
+        reset_env(:llm_provider, llm_provider_original)
+        reset_env(:llm, llm_original)
+        reset_env(:llm_profiles, llm_profiles_original)
+      end)
+
+      :ok
+    end
 
     test "renders budget summary and provenance data", %{conn: conn, user: _user} do
       attach_telemetry_handler([:leythers_com, :web, :admin_overview, :mount, :stop])
@@ -101,6 +124,24 @@ defmodule LeythersComWeb.Admin.OverviewLiveTest do
 
       assert render(view) =~ "Queued job ##{job.id} for retry"
     end
+
+    test "renders llm provider controls and switches provider", %{conn: conn, user: _user} do
+      Application.put_env(:leythers_com, :llm_provider, :ollama)
+      Application.put_env(:leythers_com, :llm, adapter: LeythersCom.Intelligence.LLMClient.Ollama)
+
+      {:ok, view, _html} = live(conn, ~p"/admin/overview")
+
+      assert has_element?(view, "#llm-provider-controls")
+      assert has_element?(view, "#llm-provider-buttons button[phx-value-provider='openrouter']")
+      assert has_element?(view, "#llm-provider-buttons button[phx-value-provider='ollama']")
+
+      view
+      |> element("#llm-provider-buttons button[phx-value-provider='openrouter']")
+      |> render_click()
+
+      assert render(view) =~ "LLM provider switched to openrouter"
+      assert render(view) =~ "current: OpenRouter"
+    end
   end
 
   defp attach_telemetry_handler(event_name) do
@@ -143,4 +184,7 @@ defmodule LeythersComWeb.Admin.OverviewLiveTest do
 
     LeythersCom.Repo.get!(Job, job.id)
   end
+
+  defp reset_env(key, nil), do: Application.delete_env(:leythers_com, key)
+  defp reset_env(key, value), do: Application.put_env(:leythers_com, key, value)
 end

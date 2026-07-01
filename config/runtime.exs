@@ -16,6 +16,45 @@ import Config
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
+if config_env() == :dev do
+  dotenv_path = Path.expand("../.env", __DIR__)
+
+  if File.regular?(dotenv_path) do
+    dotenv_path
+    |> File.stream!()
+    |> Stream.map(&String.trim/1)
+    |> Stream.reject(&(&1 == "" or String.starts_with?(&1, "#")))
+    |> Enum.each(fn line ->
+      normalized_line =
+        if String.starts_with?(line, "export ") do
+          line |> String.trim_leading("export ") |> String.trim()
+        else
+          line
+        end
+
+      case String.split(normalized_line, "=", parts: 2) do
+        [raw_key, raw_value] ->
+          key = String.trim(raw_key)
+
+          value =
+            raw_value
+            |> String.trim()
+            |> String.trim_leading("\"")
+            |> String.trim_trailing("\"")
+            |> String.trim_leading("'")
+            |> String.trim_trailing("'")
+
+          if key != "" and is_nil(System.get_env(key)) do
+            System.put_env(key, value)
+          end
+
+        _ ->
+          :ok
+      end
+    end)
+  end
+end
+
 if System.get_env("PHX_SERVER") do
   config :leythers_com, LeythersComWeb.Endpoint, server: true
 end
@@ -23,29 +62,75 @@ end
 config :leythers_com, LeythersComWeb.Endpoint,
   http: [port: System.get_env("PORT", "4000") |> String.to_integer()]
 
+env_bool = fn key, default ->
+  case System.get_env(key) do
+    nil -> default
+    value when value in ["1", "true", "TRUE", "yes", "YES"] -> true
+    _value -> false
+  end
+end
+
+env_int = fn key, default ->
+  case System.get_env(key) do
+    nil -> default
+    value -> String.to_integer(value)
+  end
+end
+
+env_float = fn key, default ->
+  case System.get_env(key) do
+    nil -> default
+    value -> String.to_float(value)
+  end
+end
+
+default_ollama_profile = [
+  adapter: LeythersCom.Intelligence.LLMClient.Ollama,
+  endpoint: System.get_env("OLLAMA_API_ENDPOINT") || "http://127.0.0.1:11434",
+  model: System.get_env("OLLAMA_MODEL") || "llama3.1:8b",
+  temperature: env_float.("LLM_TEMPERATURE", 0.4),
+  num_predict: env_int.("LLM_NUM_PREDICT", 600),
+  timeout_ms: env_int.("LLM_TIMEOUT_MS", 30_000),
+  log_requests: env_bool.("LLM_LOG_REQUESTS", false)
+]
+
+default_openrouter_profile = [
+  adapter: LeythersCom.Intelligence.LLMClient.OpenRouter,
+  endpoint: System.get_env("OPENROUTER_API_ENDPOINT") || "https://openrouter.ai/api/v1",
+  api_key: System.get_env("OPENROUTER_API_KEY"),
+  model: System.get_env("OPENROUTER_MODEL") || "meta-llama/llama-3.1-8b-instruct",
+  http_referer: System.get_env("OPENROUTER_HTTP_REFERER"),
+  site_name: System.get_env("OPENROUTER_SITE_NAME") || "LeythersCom",
+  temperature: env_float.("LLM_TEMPERATURE", 0.4),
+  num_predict: env_int.("LLM_NUM_PREDICT", 600),
+  timeout_ms: env_int.("LLM_TIMEOUT_MS", 30_000),
+  log_requests: env_bool.("LLM_LOG_REQUESTS", false)
+]
+
+config :leythers_com, :runtime_env, config_env()
+
+config :leythers_com, :llm_profiles,
+  openrouter: default_openrouter_profile,
+  ollama: default_ollama_profile
+
+if config_env() == :dev do
+  dev_provider =
+    case String.downcase(System.get_env("DEV_LLM_PROVIDER") || "ollama") do
+      "openrouter" -> :openrouter
+      _ -> :ollama
+    end
+
+  active_profile =
+    case dev_provider do
+      :openrouter -> default_openrouter_profile
+      :ollama -> default_ollama_profile
+    end
+
+  config :leythers_com, :llm_provider, dev_provider
+  config :leythers_com, :llm, active_profile
+end
+
 if config_env() == :prod do
-  env_bool = fn key, default ->
-    case System.get_env(key) do
-      nil -> default
-      value when value in ["1", "true", "TRUE", "yes", "YES"] -> true
-      _value -> false
-    end
-  end
-
-  env_int = fn key, default ->
-    case System.get_env(key) do
-      nil -> default
-      value -> String.to_integer(value)
-    end
-  end
-
-  env_float = fn key, default ->
-    case System.get_env(key) do
-      nil -> default
-      value -> String.to_float(value)
-    end
-  end
-
   database_url =
     System.get_env("DATABASE_URL") ||
       raise """
@@ -86,14 +171,26 @@ if config_env() == :prod do
       intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 1)
     ]
 
-  config :leythers_com, :llm,
-    adapter: LeythersCom.Intelligence.LLMClient.Ollama,
-    endpoint: System.get_env("LLM_API_ENDPOINT") || "http://127.0.0.1:11434",
-    model: System.get_env("LLM_MODEL") || "qwen3:1.7b",
-    temperature: env_float.("LLM_TEMPERATURE", 0.4),
-    num_predict: env_int.("LLM_NUM_PREDICT", 600),
-    timeout_ms: env_int.("LLM_TIMEOUT_MS", 30_000),
-    log_requests: env_bool.("LLM_LOG_REQUESTS", false)
+  llm_provider =
+    case String.downcase(System.get_env("LLM_PROVIDER") || "openrouter") do
+      "openrouter" ->
+        :openrouter
+
+      _ ->
+        raise """
+        invalid LLM_PROVIDER for production.
+        Allowed value: openrouter
+        """
+    end
+
+  config :leythers_com, :llm_provider, llm_provider
+
+  llm_profile =
+    case llm_provider do
+      :openrouter -> default_openrouter_profile
+    end
+
+  config :leythers_com, :llm, llm_profile
 
   config :leythers_com, :llm_guard,
     failure_threshold: env_int.("LLM_GUARD_FAILURE_THRESHOLD", 4),

@@ -34,11 +34,17 @@ Recommended environment variables:
 10. `OBAN_QUEUE_INGESTION` (default: `2`)
 11. `OBAN_QUEUE_INTELLIGENCE` (default: `1`)
 12. `OBAN_PRUNER_MAX_AGE_SECONDS` (default: `604800`)
-13. `LLM_API_ENDPOINT` (default: `http://127.0.0.1:11434`)
-14. `LLM_MODEL` (default: `qwen3:1.7b`)
-15. `LLM_TEMPERATURE` (default: `0.4`)
-16. `LLM_NUM_PREDICT` (default: `600`)
-17. `LLM_TIMEOUT_MS` (default: `30000`)
+13. `LLM_PROVIDER` (production default: `openrouter`)
+14. `OPENROUTER_API_KEY` (required in production when `LLM_PROVIDER=openrouter`)
+15. `OPENROUTER_API_ENDPOINT` (default: `https://openrouter.ai/api/v1`)
+16. `OPENROUTER_MODEL` (default: `meta-llama/llama-3.1-8b-instruct`)
+17. `OPENROUTER_HTTP_REFERER` (recommended for OpenRouter attribution/routing)
+18. `OPENROUTER_SITE_NAME` (default: `LeythersCom`)
+19. `OLLAMA_API_ENDPOINT` (default: `http://127.0.0.1:11434`)
+20. `OLLAMA_MODEL` (default: `llama3.1:8b`)
+21. `LLM_TEMPERATURE` (default: `0.4`)
+22. `LLM_NUM_PREDICT` (default: `600`)
+23. `LLM_TIMEOUT_MS` (default: `30000`)
 
 Notes:
 
@@ -46,12 +52,46 @@ Notes:
 2. Tune `POOL_SIZE` together with Oban queue concurrency. Start low, then scale based on observed throughput.
 3. Use separate credentials for runtime and migrations when your provider enforces restricted roles.
 
+LLM provider behavior by environment:
+
+1. Production: OpenRouter only. Startup rejects unsupported provider values.
+2. Development: can use OpenRouter or local Ollama.
+3. Development provider choice is persisted in DB and restored on restart.
+
+Development provider switching (on the fly):
+
+1. Start app in dev, then run:
+   - `iex -S mix`
+   - `LeythersCom.Intelligence.set_dev_llm_provider(:openrouter)`
+   - or `LeythersCom.Intelligence.set_dev_llm_provider(:ollama)`
+2. Switch applies immediately to subsequent LLM calls.
+3. Preference is persisted in `intelligence_runtime_settings` and survives restarts.
+
+Development provider precedence on startup:
+
+1. If `DEV_LLM_PROVIDER` is set, it wins.
+2. Otherwise, app restores persisted `dev_llm_provider` from DB.
+
 Local Ollama testing:
 
 1. Start Ollama locally.
 2. Pull and run the default model:
-   - `ollama pull qwen3:1.7b`
-3. Keep `LLM_API_ENDPOINT=http://127.0.0.1:11434` for cost-free local evaluation.
+   - `ollama pull llama3.1:8b`
+3. Keep `OLLAMA_API_ENDPOINT=http://127.0.0.1:11434` for cost-free local evaluation.
+
+OpenRouter setup:
+
+1. Set `OPENROUTER_API_KEY` in runtime environment (never commit).
+2. Set `OPENROUTER_MODEL` for your chosen model route.
+3. Optionally set `OPENROUTER_HTTP_REFERER` and `OPENROUTER_SITE_NAME` for better attribution and policy compliance.
+
+Local env file usage:
+
+1. Copy `.env.example` to `.env` for local-only secrets.
+2. In development, `.env` is auto-loaded at app boot by `config/runtime.exs`.
+3. Already exported shell variables take precedence over `.env` values.
+4. `.env` is gitignored.
+5. `.env.example` is safe to commit.
 
 ## Real Feed Ingestion Testing (Leigh Leopards)
 

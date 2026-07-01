@@ -188,9 +188,10 @@ config :leythers_com, :ingestion_monitoring,
 config :leythers_com, LeythersCom.Scheduler,
   jobs: [
     {"@daily", {LeythersCom.Ingestion.SourceLinkHealthChecker, :check_all_raw_sources, []}},
-    {"*/10 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}},
-    {"@hourly", {LeythersCom.Ingestion, :refresh_stale_feeds, []}},
-    {"*/1 * * * *", {LeythersCom.Intelligence.SourceEditorialWorker, :enqueue, [%{"drain_backlog" => true}]}}
+    {"*/30 * * * *", {LeythersCom.Ingestion, :ingest_configured_feeds, []}},
+    {"0 */6 * * *", {LeythersCom.Ingestion, :refresh_stale_feeds, []}},
+    {"@hourly",
+     {LeythersCom.Intelligence.SourceEditorialWorker, :enqueue, [%{"drain_backlog" => true}]}}
   ]
 
 # Import environment specific config. This must remain at the bottom

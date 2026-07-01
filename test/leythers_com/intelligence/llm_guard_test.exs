@@ -52,7 +52,8 @@ defmodule LeythersCom.Intelligence.LLMGuardTest do
     LLMGuard.report_failure()
     state_after_next_failure = :sys.get_state(LLMGuard)
 
-    next_cooldown_ms = state_after_next_failure.open_until_ms - System.monotonic_time(:millisecond)
+    next_cooldown_ms =
+      state_after_next_failure.open_until_ms - System.monotonic_time(:millisecond)
 
     assert next_cooldown_ms <= 150
     assert next_cooldown_ms > first_cooldown_ms

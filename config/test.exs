@@ -36,8 +36,7 @@ config :logger, level: :warning
 # Disable Oban queues and plugins in test
 config :leythers_com, Oban, testing: :inline
 
-config :leythers_com, LeythersCom.Scheduler,
-  jobs: []
+config :leythers_com, LeythersCom.Scheduler, jobs: []
 
 config :leythers_com, :homepage_ranking,
   llm_enabled: false,
@@ -71,8 +70,7 @@ config :leythers_com, :intelligence_generation,
 config :leythers_com,
   regeneration_enqueue_worker: false
 
-config :leythers_com, :llm_rate_limit,
-  enabled: false
+config :leythers_com, :llm_rate_limit, enabled: false
 
 # Initialize plugs at runtime for faster test compilation
 config :phoenix, :plug_init_mode, :runtime

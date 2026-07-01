@@ -10,7 +10,7 @@ defmodule LeythersCom.Intelligence.LLMClient.OllamaTest do
          status: 200,
          body: %{
            "response" => "Generated output",
-           "model" => "qwen3:1.7b"
+           "model" => "llama3.1:8b"
          }
        }}
     end
@@ -21,10 +21,10 @@ defmodule LeythersCom.Intelligence.LLMClient.OllamaTest do
   end
 
   test "returns generated text on success" do
-    assert {:ok, %{text: "Generated output", model: "qwen3:1.7b"}} =
+    assert {:ok, %{text: "Generated output", model: "llama3.1:8b"}} =
              Ollama.generate(
                "prompt",
-               [endpoint: "http://127.0.0.1:11434", model: "qwen3:1.7b"],
+               [endpoint: "http://127.0.0.1:11434", model: "llama3.1:8b"],
                FakeHTTPClient
              )
   end
@@ -33,16 +33,16 @@ defmodule LeythersCom.Intelligence.LLMClient.OllamaTest do
     assert {:error, :econnrefused} =
              Ollama.generate(
                "prompt",
-               [endpoint: "http://127.0.0.1:11434", model: "qwen3:1.7b"],
+               [endpoint: "http://127.0.0.1:11434", model: "llama3.1:8b"],
                FakeErrorHTTPClient
              )
   end
 
   test "normalizes endpoint with trailing slash" do
-    assert {:ok, %{text: "Generated output", model: "qwen3:1.7b"}} =
+    assert {:ok, %{text: "Generated output", model: "llama3.1:8b"}} =
              Ollama.generate(
                "prompt",
-               [endpoint: "http://127.0.0.1:11434/", model: "qwen3:1.7b"],
+               [endpoint: "http://127.0.0.1:11434/", model: "llama3.1:8b"],
                FakeHTTPClient
              )
   end

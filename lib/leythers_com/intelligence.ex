@@ -9,6 +9,8 @@ defmodule LeythersCom.Intelligence do
   alias LeythersCom.Intelligence.CostLedger
   alias LeythersCom.Intelligence.HomepageRankingDecision
   alias LeythersCom.Intelligence.JobEffectEvent
+  alias LeythersCom.Intelligence.LLMProvider
+  alias LeythersCom.Intelligence.RuntimeSetting
   alias LeythersCom.Intelligence.SourceEditorialWorker
   alias LeythersCom.Repo
   alias Oban.Job
@@ -29,6 +31,41 @@ defmodule LeythersCom.Intelligence do
     "discarded",
     "cancelled"
   ]
+  @dev_llm_provider_key "dev_llm_provider"
+
+  def current_llm_provider do
+    LLMProvider.current_provider()
+  end
+
+  def set_dev_llm_provider(provider) do
+    with :ok <- ensure_dev_environment(),
+         {:ok, normalized_provider} <- LLMProvider.normalize_provider(provider),
+         {:ok, _setting} <- upsert_dev_llm_provider_setting(normalized_provider) do
+      :ok = LLMProvider.activate(normalized_provider)
+      {:ok, normalized_provider}
+    else
+      :error -> {:error, :invalid_provider}
+      other -> other
+    end
+  end
+
+  def restore_dev_llm_provider do
+    with :ok <- ensure_dev_environment(),
+         false <- dev_provider_explicitly_configured?(),
+         %RuntimeSetting{value: value} <- Repo.get_by(RuntimeSetting, key: @dev_llm_provider_key),
+         {:ok, provider} <- LLMProvider.normalize_provider(value) do
+      :ok = LLMProvider.activate(provider)
+      {:ok, provider}
+    else
+      true -> :ok
+      nil -> :ok
+      :error -> {:error, :invalid_provider}
+      {:error, :unsupported_environment} -> :ok
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
 
   def upsert_cost_ledger(%{date: date} = attrs) when not is_nil(date) do
     started_at = System.monotonic_time()
@@ -50,6 +87,38 @@ defmodule LeythersCom.Intelligence do
     result = {:error, CostLedger.changeset(%CostLedger{}, attrs)}
     emit_cost_ledger_telemetry(result, started_at)
     result
+  end
+
+  defp ensure_dev_environment do
+    if Application.get_env(:leythers_com, :runtime_env, :dev) == :dev do
+      :ok
+    else
+      {:error, :unsupported_environment}
+    end
+  end
+
+  defp dev_provider_explicitly_configured? do
+    case System.get_env("DEV_LLM_PROVIDER") do
+      nil -> false
+      value -> String.trim(value) != ""
+    end
+  end
+
+  defp upsert_dev_llm_provider_setting(provider) do
+    now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
+    provider_value = Atom.to_string(provider)
+
+    changeset =
+      RuntimeSetting.changeset(%RuntimeSetting{}, %{
+        key: @dev_llm_provider_key,
+        value: provider_value
+      })
+
+    Repo.insert(
+      changeset,
+      on_conflict: [set: [value: provider_value, updated_at: now]],
+      conflict_target: :key
+    )
   end
 
   defp do_upsert_ledger(changeset, date, attrs) do

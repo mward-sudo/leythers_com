@@ -119,7 +119,11 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
         end
 
       {:ok, {:error, reason}} ->
-        raise "llm_unavailable: #{inspect(reason)}"
+        if reason == :missing_openrouter_api_key do
+          {:deterministic, deterministic_importance(entry)}
+        else
+          raise "llm_unavailable: #{inspect(reason)}"
+        end
 
       :timeout ->
         raise "llm_unavailable: timeout"

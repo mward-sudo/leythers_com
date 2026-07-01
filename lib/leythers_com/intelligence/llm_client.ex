@@ -10,6 +10,7 @@ defmodule LeythersCom.Intelligence.LLMClient do
 
   alias __MODULE__.Ollama
   alias LeythersCom.Intelligence.LLMGuard
+  alias LeythersCom.Intelligence.LLMProvider
 
   @default_rate_limit_enabled false
   @default_rate_limit_key "llm:global"
@@ -32,7 +33,7 @@ defmodule LeythersCom.Intelligence.LLMClient do
 
   @spec llm_config() :: keyword()
   def llm_config do
-    Application.get_env(:leythers_com, :llm, [])
+    LLMProvider.llm_config()
   end
 
   defp do_generate(prompt, opts) do
@@ -60,6 +61,7 @@ defmodule LeythersCom.Intelligence.LLMClient do
 
   defp transient_failure?(%Req.TransportError{}), do: true
   defp transient_failure?(:timeout), do: true
+  defp transient_failure?(:missing_openrouter_api_key), do: false
   defp transient_failure?(_reason), do: false
 
   defp wait_for_rate_limit_slot(opts) do
