@@ -7,7 +7,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   processed after successful publication.
   """
 
-  use Oban.Worker, queue: :intelligence, max_attempts: 3
+  use Oban.Worker, queue: :intelligence, max_attempts: 200
 
   import Ecto.Query
 
@@ -25,6 +25,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_prompt_version "source_editorial_v1"
   @default_enqueue_unique_seconds 3_600
   @default_worker_timeout_ms :timer.minutes(10)
+  @default_dispatch_delay_ms 2_000
+  @default_retry_base_seconds 1
+  @default_retry_max_seconds 15
+  @default_retry_persist_threshold 3
 
   def enqueue(attrs \\ %{}) when is_map(attrs) do
     attrs
@@ -43,9 +47,30 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   def timeout(%Oban.Job{} = _job), do: worker_timeout_ms()
 
   @impl Oban.Worker
+  def backoff(%Oban.Job{} = job) do
+    base_seconds = retry_base_seconds() |> max(1)
+    max_seconds = retry_max_seconds() |> max(base_seconds)
+    attempt = max(job.attempt, 1)
+    persist_threshold = retry_persist_threshold() |> max(1)
+
+    delay_seconds =
+      if attempt <= persist_threshold do
+        base_seconds
+      else
+        escalation_attempt = attempt - persist_threshold
+        base_seconds * trunc(:math.pow(2, escalation_attempt - 1))
+      end
+
+    min(delay_seconds, max_seconds)
+  end
+
+  @impl Oban.Worker
   def perform(%Oban.Job{} = job) do
     if auto_generation_enabled?() do
-      process_pending_sources(job)
+      case Map.get(job.args, "task") do
+        "cluster" -> process_cluster_task(job)
+        _ -> process_pending_sources(job)
+      end
     else
       :ok
     end
@@ -57,14 +82,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     drain_backlog? = Map.get(args, "drain_backlog", true)
     run_id = Ecto.UUID.generate()
 
-    process_batches(job, run_id, source_limit, max_batches, drain_backlog?)
+    dispatch_cluster_tasks(job, run_id, source_limit, max_batches, drain_backlog?)
   end
 
-  defp process_batches(_job, _run_id, _source_limit, max_batches, _drain_backlog?)
+  defp dispatch_cluster_tasks(_job, _run_id, _source_limit, max_batches, _drain_backlog?)
        when max_batches <= 0,
        do: :ok
 
-  defp process_batches(job, run_id, source_limit, max_batches, drain_backlog?) do
+  defp dispatch_cluster_tasks(job, run_id, source_limit, max_batches, drain_backlog?) do
     pending_sources = fetch_pending_sources(source_limit)
 
     case pending_sources do
@@ -72,21 +97,23 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         :ok
 
       _ ->
-        case process_batch(job, pending_sources, run_id) do
-          {:ok, processed_count, budget_blocked?} ->
-            cond do
-              budget_blocked? ->
-                :ok
-
-              not drain_backlog? ->
-                :ok
-
-              processed_count <= 0 ->
-                :ok
-
-              true ->
-                process_batches(job, run_id, source_limit, max_batches - 1, true)
-            end
+        pending_sources
+        |> cluster_sources()
+        |> Enum.reduce_while(:ok, fn cluster, :ok ->
+          case enqueue_cluster_task(cluster, run_id) do
+            {:ok, _job} -> {:cont, :ok}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        end)
+        |> case do
+          :ok ->
+            maybe_enqueue_dispatch_continuation(
+              job,
+              pending_sources,
+              source_limit,
+              max_batches,
+              drain_backlog?
+            )
 
           {:error, reason} ->
             {:error, reason}
@@ -102,24 +129,83 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> Repo.all()
   end
 
-  defp process_batch(job, pending_sources, run_id) do
-    pending_sources
-    |> cluster_sources()
-    |> Enum.reduce_while({:ok, 0, false}, fn cluster_sources, {:ok, processed_total, _} ->
-      case publish_cluster(job, cluster_sources, run_id) do
-        {:ok, processed_count} ->
-          {:cont, {:ok, processed_total + processed_count, false}}
+  defp maybe_enqueue_dispatch_continuation(_job, _pending_sources, _source_limit, _max_batches, false),
+    do: :ok
 
-        {:halt, :budget_blocked} ->
-          {:halt, {:ok, processed_total, true}}
+  defp maybe_enqueue_dispatch_continuation(_job, _pending_sources, _source_limit, max_batches, _drain_backlog?)
+       when max_batches <= 1,
+    do: :ok
 
-        {:error, reason} ->
-          {:halt, {:error, reason}}
-      end
-    end)
+  defp maybe_enqueue_dispatch_continuation(_job, pending_sources, source_limit, max_batches, true) do
+    if length(pending_sources) < source_limit do
+      :ok
+    else
+      enqueue_dispatch_continuation(source_limit, max_batches - 1)
+    end
   end
 
-  defp publish_cluster(_job, [], _run_id), do: {:ok, 0}
+  defp enqueue_dispatch_continuation(source_limit, max_batches_left) do
+    %{
+      "source_limit" => source_limit,
+      "max_batches" => max_batches_left,
+      "drain_backlog" => true
+    }
+    |> new(schedule_in: dispatch_delay_ms())
+    |> Oban.insert()
+
+    :ok
+  end
+
+  defp enqueue_cluster_task(cluster_sources, run_id) do
+    source_ids =
+      cluster_sources
+      |> Enum.map(& &1.id)
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+
+    %{
+      "task" => "cluster",
+      "process_run_id" => run_id,
+      "source_ids" => source_ids
+    }
+    |> new(
+      unique: [
+        fields: [:worker, :args],
+        period: enqueue_unique_seconds(),
+        states: [:available, :scheduled, :executing, :retryable]
+      ]
+    )
+    |> Oban.insert()
+  end
+
+  defp process_cluster_task(%Oban.Job{args: args} = job) do
+    run_id = Map.get(args, "process_run_id", Ecto.UUID.generate())
+    source_ids = Map.get(args, "source_ids", [])
+
+    cluster_sources = fetch_sources_by_ids(source_ids)
+
+    case cluster_sources do
+      [] ->
+        :ok
+
+      _ ->
+        case publish_cluster(job, cluster_sources, run_id) do
+          {:ok, _processed_count} -> :ok
+          {:halt, :budget_blocked} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+    end
+  end
+
+  defp fetch_sources_by_ids(source_ids) when is_list(source_ids) do
+    RawSource
+    |> where([source], source.id in ^source_ids)
+    |> order_by([source], asc: source.external_published_at, asc: source.inserted_at)
+    |> Repo.all()
+  end
+
+  defp fetch_sources_by_ids(_source_ids), do: []
 
   defp publish_cluster(job, cluster_sources, run_id) do
     source_ids = Enum.map(cluster_sources, & &1.id)
@@ -551,6 +637,30 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms)
+  end
+
+  defp dispatch_delay_ms do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:source_editorial_dispatch_delay_ms, @default_dispatch_delay_ms)
+  end
+
+  defp retry_base_seconds do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:source_editorial_retry_base_seconds, @default_retry_base_seconds)
+  end
+
+  defp retry_max_seconds do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:source_editorial_retry_max_seconds, @default_retry_max_seconds)
+  end
+
+  defp retry_persist_threshold do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:source_editorial_retry_persist_threshold, @default_retry_persist_threshold)
   end
 
   defp persist_decision(base_attrs, action, article_id, summary, llm_cost_attrs) do

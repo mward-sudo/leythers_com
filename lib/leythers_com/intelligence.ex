@@ -688,8 +688,7 @@ defmodule LeythersCom.Intelligence do
     %{
       running_jobs: running_jobs || 0,
       queued_jobs: queued_jobs || 0,
-      pending_sources: pending_sources || 0,
-      left_to_run: queued_jobs || 0
+      pending_sources: pending_sources || 0
     }
   end
 
@@ -724,9 +723,10 @@ defmodule LeythersCom.Intelligence do
          worker: worker,
          state: state,
          attempted_at: attempted_at,
-         id: job_id
+         id: job_id,
+         args: args
        }) do
-    {process_type, process_name} = infer_process_info_from_worker(worker)
+    {process_type, process_name} = infer_process_info_from_worker(worker, args)
 
     process_status =
       case state do
@@ -750,13 +750,27 @@ defmodule LeythersCom.Intelligence do
     }
   end
 
-  defp infer_process_info_from_worker(worker) do
+  defp infer_process_info_from_worker(worker, args) do
     case worker do
       "LeythersCom.Ingestion.FetchRssFeedWorker" ->
         {:ingestion, "RSS Feed Ingestion"}
 
       "LeythersCom.Intelligence.SourceEditorialWorker" ->
-        {:editorial, "Editorial Review"}
+        source_count =
+          args
+          |> Map.get("source_ids", [])
+          |> Enum.count()
+
+        case Map.get(args, "task") do
+          "cluster" when source_count > 0 ->
+            {:editorial, "Editorial Cluster Task: #{source_count} sources"}
+
+          "cluster" ->
+            {:editorial, "Editorial Cluster Task"}
+
+          _ ->
+            {:editorial, "Editorial Dispatch"}
+        end
 
       worker ->
         {:job, worker}
@@ -1082,7 +1096,7 @@ defmodule LeythersCom.Intelligence do
     %{
       id: "live-#{job.id}",
       type: :live_job,
-      subtype: worker_activity_subtype(job.worker),
+      subtype: worker_activity_subtype(job.worker, job.args || %{}),
       timestamp: job.attempted_at || job.inserted_at,
       state: job.state,
       job_id: job.id,
@@ -1092,15 +1106,20 @@ defmodule LeythersCom.Intelligence do
     }
   end
 
-  defp worker_activity_subtype(worker) when is_binary(worker) do
+  defp worker_activity_subtype(worker, args) when is_binary(worker) and is_map(args) do
     cond do
-      String.contains?(worker, "SourceEditorialWorker") -> :editorial
+      String.contains?(worker, "SourceEditorialWorker") and Map.get(args, "task") == "cluster" ->
+        :editorial_task
+
+      String.contains?(worker, "SourceEditorialWorker") ->
+        :editorial_dispatch
+
       String.contains?(worker, "FetchRssFeedWorker") -> :ingestion
       true -> :other
     end
   end
 
-  defp worker_activity_subtype(_), do: :other
+  defp worker_activity_subtype(_worker, _args), do: :other
 
   defp editorial_activity_runs(limit) do
     events =

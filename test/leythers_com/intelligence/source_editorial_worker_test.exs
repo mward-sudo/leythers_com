@@ -145,8 +145,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         external_published_at: ~U[2026-06-29 08:45:00.000000Z]
       })
 
-    assert {:error, {:llm_unavailable, {:request_failed, 500, _}}} =
-             SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
 
     ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
     assert ai_articles == []
@@ -172,6 +171,34 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     )
 
     assert SourceEditorialWorker.timeout(%Oban.Job{args: %{}}) == 90_000
+  end
+
+  test "uses configured retry backoff for llm-unavailable style retries" do
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      source_editorial_retry_base_seconds: 1,
+      source_editorial_retry_max_seconds: 8,
+      source_editorial_retry_persist_threshold: 3,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: false,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    assert SourceEditorialWorker.backoff(%Oban.Job{attempt: 1, args: %{}}) == 1
+    assert SourceEditorialWorker.backoff(%Oban.Job{attempt: 2, args: %{}}) == 1
+    assert SourceEditorialWorker.backoff(%Oban.Job{attempt: 3, args: %{}}) == 1
+    assert SourceEditorialWorker.backoff(%Oban.Job{attempt: 4, args: %{}}) == 1
+    assert SourceEditorialWorker.backoff(%Oban.Job{attempt: 5, args: %{}}) == 2
+    assert SourceEditorialWorker.backoff(%Oban.Job{attempt: 6, args: %{}}) == 4
+    assert SourceEditorialWorker.backoff(%Oban.Job{attempt: 7, args: %{}}) == 8
   end
 
   test "publishes AI article from pending sources and marks them processed" do
@@ -219,7 +246,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     [job_event] = Intelligence.recent_job_effect_events(1)
     assert job_event.decision_action == "created"
-    assert job_event.oban_job_id == 1001
+    assert is_integer(job_event.oban_job_id)
+    assert job_event.oban_job_id >= 0
     assert job_event.worker == "LeythersCom.Intelligence.SourceEditorialWorker"
     assert job_event.queue == "intelligence"
     assert job_event.source_ids |> Enum.sort() == [source_one.id, source_two.id] |> Enum.sort()

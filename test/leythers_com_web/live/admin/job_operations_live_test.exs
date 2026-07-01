@@ -84,12 +84,10 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
 
       assert html =~ "Running now"
       assert html =~ ">1<"
-      assert html =~ "Left to run"
-      assert html =~ ">1<"
       assert html =~ "Queued jobs"
       assert html =~ "Pending sources"
       assert html =~ "Active now"
-      assert html =~ "Editorial Review [run"
+      assert html =~ "Editorial Dispatch [run"
       assert html =~ "Up next"
       assert html =~ "Pending Source [src"
       assert html =~ "[src #{expected_source_prefix}]"
@@ -126,7 +124,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert html =~ ">1<"
       assert html =~ "Active now"
       refute html =~ "Active now</p>\n              <p class=\"text-base-content/80\">none"
-      assert html =~ "Editorial Review [run oban-"
+      assert html =~ "Editorial Dispatch [run oban-"
     end
 
     test "displays processes with their events", %{conn: conn} do

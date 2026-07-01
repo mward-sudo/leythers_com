@@ -120,7 +120,15 @@ config :leythers_com, :intelligence_generation,
   llm_grouping_enabled: false,
   grouping_llm_timeout_ms: 30_000,
   source_batch_size: 8,
-  max_batches_per_run: 8
+  max_batches_per_run: 8,
+  source_editorial_retry_base_seconds: 1,
+  source_editorial_retry_max_seconds: 8,
+  source_editorial_retry_persist_threshold: 3
+
+config :leythers_com, :editorial_orchestration,
+  refresh_retry_base_seconds: 1,
+  refresh_retry_max_seconds: 8,
+  refresh_retry_persist_threshold: 3
 
 # LLM configuration for development
 # Allow longer timeouts for local Ollama since it may be slower on first request

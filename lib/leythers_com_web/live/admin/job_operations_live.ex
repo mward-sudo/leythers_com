@@ -33,8 +33,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
      |> assign(:progress_snapshot, %{
        running_jobs: 0,
        queued_jobs: 0,
-       pending_sources: 0,
-       left_to_run: 0
+       pending_sources: 0
      })
      |> assign(
        :live_activity,
@@ -294,18 +293,12 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
           </div>
         </div>
 
-        <div id="job-progress-summary" class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div id="job-progress-summary" class="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
             <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
               Running now
             </p>
             <p class="mt-1 text-2xl font-bold text-base-content">{@progress_snapshot.running_jobs}</p>
-          </div>
-          <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
-            <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
-              Left to run
-            </p>
-            <p class="mt-1 text-2xl font-bold text-base-content">{@progress_snapshot.left_to_run}</p>
           </div>
           <div class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 shadow-sm">
             <p class="text-xs font-medium uppercase tracking-wider text-base-content/50">
