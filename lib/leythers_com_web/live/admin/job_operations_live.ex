@@ -127,11 +127,15 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   @impl true
   def handle_event("regenerate-all", _params, socket) do
+    {:ok, %{cancelled_jobs: cancelled_count}} = Intelligence.cancel_all_jobs()
     {:ok, %{requeued_sources: n}} = Ingestion.enqueue_article_regeneration(:all)
 
     {:noreply,
      socket
-     |> put_flash(:info, "Queued full regeneration and re-queued #{n} source(s).")
+     |> put_flash(
+       :info,
+       "Cancelled #{cancelled_count} job(s). Queued full regeneration and re-queued #{n} source(s)."
+     )
      |> refresh_page()}
   end
 

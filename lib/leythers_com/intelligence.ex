@@ -239,6 +239,36 @@ defmodule LeythersCom.Intelligence do
 
   def retry_failed_job(_job_id), do: {:error, :invalid_job_id}
 
+  def cancel_all_jobs do
+    started_at = System.monotonic_time()
+
+    # Cancel all jobs in non-terminal states (active and queued)
+    non_terminal_states =
+      Map.fetch!(@job_bucket_states, :active) ++ Map.fetch!(@job_bucket_states, :queued)
+
+    jobs_to_cancel =
+      Job
+      |> where([job], job.state in ^non_terminal_states)
+      |> Repo.all()
+
+    cancelled_count =
+      jobs_to_cancel
+      |> Enum.count(fn job ->
+        case Oban.cancel_job(job.id) do
+          {:ok, _job} -> true
+          _ -> false
+        end
+      end)
+
+    :telemetry.execute(
+      [:leythers_com, :intelligence, :cancel_all_jobs, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      %{result: :ok, cancelled_count: cancelled_count}
+    )
+
+    {:ok, %{cancelled_jobs: cancelled_count}}
+  end
+
   def job_operations_bucket_counts(filters \\ %{}) when is_map(filters) do
     base_query = job_operations_base_query(filters)
 
