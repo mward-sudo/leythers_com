@@ -30,6 +30,11 @@ config :leythers_com, LeythersComWeb.Endpoint,
     tailwind: {Tailwind, :install_and_run, [:leythers_com, ~w(--watch)]}
   ]
 
+# LLM configuration for development
+# Allow longer timeouts for local Ollama since it may be slower on first request
+config :leythers_com,
+  llm_comparison_timeout_ms: 60_000
+
 # ## SSL Support
 #
 # In order to use HTTPS in development, a self-signed
@@ -99,3 +104,9 @@ config :leythers_com, :intelligence_generation,
   grouping_llm_timeout_ms: 30_000,
   source_batch_size: 8,
   max_batches_per_run: 8
+
+# LLM configuration for development
+# Allow longer timeouts for local Ollama since it may be slower on first request
+# and can have variable performance. Production defaults to 3 seconds.
+config :leythers_com,
+  llm_comparison_timeout_ms: 60_000

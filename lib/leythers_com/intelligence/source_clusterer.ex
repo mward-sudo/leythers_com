@@ -9,7 +9,9 @@ defmodule LeythersCom.Intelligence.SourceClusterer do
   alias LeythersCom.Intelligence.LLMClient
   alias LeythersCom.Intelligence.StorySimilarity
 
-  @llm_comparison_timeout_ms 3_000
+  defp llm_comparison_timeout_ms do
+    Application.get_env(:leythers_com, :llm_comparison_timeout_ms, 3_000)
+  end
 
   def cluster_by_topic(sources) when is_list(sources) do
     Enum.reduce(sources, [], fn source, clusters ->
