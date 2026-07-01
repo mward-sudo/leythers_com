@@ -16,7 +16,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       {:ok,
        %{
          text:
-           "TITLE: <b>Leigh</b> update&nbsp;special\nBODY:\n<p>Line one with <a href=\"https://example.com\">link</a>.</p>\n<p>Line two&nbsp;continues.</p>",
+           "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
          model: "fake-draft"
        }}
     end
@@ -85,11 +85,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     [article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
 
-    assert article.title == "Leigh update special"
-    assert article.body =~ "Line one with link."
-    assert article.body =~ "Line two continues."
+    assert article.title == "Leigh Squad Gearing Up"
+    assert article.summary == "Sources report training improvements."
+    assert article.body =~ "Line one discussion"
+    assert article.body =~ "Line two continues"
     refute article.title =~ "<"
+    refute article.summary =~ "<"
     refute article.body =~ "<"
+    refute article.summary =~ "&nbsp;"
     refute article.body =~ "&nbsp;"
   end
 

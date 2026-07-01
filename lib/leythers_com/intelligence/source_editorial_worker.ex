@@ -257,7 +257,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   defp build_article_attrs(cluster_sources) do
     primary = List.first(cluster_sources)
-    summary = article_summary(cluster_sources)
+    summary_fallback = article_summary(cluster_sources)
     rumour? = rumour_cluster?(cluster_sources)
 
     case llm_draft_attrs(cluster_sources, rumour?) do
@@ -267,8 +267,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       :error ->
         {
           %{
-            title: primary.title,
-            body: summary
+            headline: primary.title,
+            summary: summary_fallback,
+            body: summary_fallback
           },
           zero_cost_attrs()
         }
@@ -310,13 +311,41 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
 
-    title_line = Enum.find(lines, &String.starts_with?(String.upcase(&1), "TITLE:"))
+    {headline, summary, body} = extract_draft_parts(lines)
+
+    sanitized_headline = sanitize_plain_text(headline)
+    sanitized_summary = sanitize_plain_text(summary)
+    sanitized_body = sanitize_plain_text(body)
+
+    if blank?(sanitized_headline) or blank?(sanitized_summary) or blank?(sanitized_body) do
+      :error
+    else
+      {:ok,
+       %{
+         headline: String.slice(sanitized_headline, 0, 100),
+         summary: String.slice(sanitized_summary, 0, 280),
+         body: String.slice(sanitized_body, 0, 12_000)
+       }}
+    end
+  end
+
+  defp parse_llm_draft(_), do: :error
+
+  defp extract_draft_parts(lines) do
+    headline_line = Enum.find(lines, &String.starts_with?(String.upcase(&1), "HEADLINE:"))
+    summary_line = Enum.find(lines, &String.starts_with?(String.upcase(&1), "SUMMARY:"))
     body_index = Enum.find_index(lines, &String.starts_with?(String.upcase(&1), "BODY:"))
 
-    title =
-      case title_line do
-        nil -> List.first(lines)
-        line -> String.trim_leading(line, "TITLE:") |> String.trim()
+    headline =
+      case headline_line do
+        nil -> ""
+        line -> extract_after_prefix(line, "HEADLINE:")
+      end
+
+    summary =
+      case summary_line do
+        nil -> ""
+        line -> extract_after_prefix(line, "SUMMARY:")
       end
 
     body =
@@ -325,38 +354,35 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         |> Enum.drop(body_index + 1)
         |> Enum.join("\n")
       else
-        lines
-        |> Enum.drop(1)
-        |> Enum.join("\n")
+        ""
       end
 
-    sanitized_title = sanitize_plain_text(title)
-    sanitized_body = sanitize_plain_text(body)
+    {headline, summary, body}
+  end
 
-    if blank?(sanitized_title) or blank?(sanitized_body) do
-      :error
-    else
-      {:ok,
-       %{
-         title: String.slice(sanitized_title, 0, 180),
-         body: String.slice(sanitized_body, 0, 12_000)
-       }}
+  defp extract_after_prefix(line, prefix) do
+    case String.split_at(line, String.length(prefix)) do
+      {^prefix, rest} -> String.trim(rest)
+      _ -> String.trim(line)
     end
   end
 
-  defp parse_llm_draft(_), do: :error
-
   defp llm_prompt(cluster_sources, rumour?) do
     """
-    Write a concise Leythers-style rugby article using these source notes.
+    Write a Leythers-style rugby article in three parts using these source notes.
 
-    Requirements:
-    - Keep factual grounding to provided notes only.
-    - Return plain text with this exact format:
-      TITLE: <single title line>
-      BODY:
-      <markdown body, 2-4 short paragraphs>
-    - If rumour is true, use cautious language and include uncertainty.
+    Voice guidance:
+    - Fan-journalist tone: colloquial Leigh perspective, light humour, terrace vernacular
+    - Be factual and grounded in provided notes only
+    - #{if rumour?, do: "Use cautious language for rumours; mark uncertainty clearly", else: "Be direct and confident in factual reporting"}
+    - Headlines lead with Leigh angle, avoid clickbait and major spoilers
+    - Summaries are plain-text teasers that encourage reading the full piece
+
+    Return exactly this format:
+    HEADLINE: <compelling Leigh-focused headline, max 100 chars>
+    SUMMARY: <plain-text teaser, max 280 chars, no HTML or markdown>
+    BODY:
+    <full article in 3-5 paragraphs, markdown-safe, with Leythers voice>
 
     Rumour: #{rumour?}
 

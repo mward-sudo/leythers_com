@@ -10,6 +10,7 @@ defmodule LeythersCom.Content.PermanentArticle do
   schema "permanent_articles" do
     field :slug, :string
     field :title, :string
+    field :summary, :string
     field :body, :string
     field :author_type, :string, default: "ai_editor"
     field :raw_content_backup, :string
@@ -21,7 +22,16 @@ defmodule LeythersCom.Content.PermanentArticle do
 
   def changeset(article, attrs) do
     article
-    |> cast(attrs, [:slug, :title, :body, :author_type, :raw_content_backup, :status, :version])
+    |> cast(attrs, [
+      :slug,
+      :title,
+      :summary,
+      :body,
+      :author_type,
+      :raw_content_backup,
+      :status,
+      :version
+    ])
     |> validate_required([:slug, :title, :body])
     |> validate_inclusion(:author_type, @valid_author_types)
     |> validate_inclusion(:status, @valid_statuses)

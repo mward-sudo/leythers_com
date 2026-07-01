@@ -67,30 +67,22 @@ defmodule LeythersCom.Content do
     rumour? = Keyword.get(opts, :rumour, false)
     recency_window_hours = Keyword.get(opts, :recency_window_hours, 36)
 
-    title = fetch_attr(attrs, :title) || ""
-    body = fetch_attr(attrs, :body)
-
-    voiced =
-      Voice.apply(%{title: title, body: body},
-        rumour: rumour?
-      )
+    # Support both 3-part structure (headline/summary/body) and legacy (title/body)
+    headline = fetch_attr(attrs, :headline) || fetch_attr(attrs, :title) || ""
+    summary = fetch_attr(attrs, :summary) || ""
+    body = fetch_attr(attrs, :body) || ""
 
     source_ids = source_ids |> Enum.reject(&blank?/1) |> Enum.map(&to_string/1) |> Enum.uniq()
 
     result =
-      if source_ids == [] do
-        {:error, :source_ids_required}
-      else
-        Repo.transaction(fn ->
-          publish_or_update_ai_decision(
-            voiced,
-            body,
-            source_ids,
-            significant_change?,
-            recency_window_hours
-          )
-        end)
-      end
+      perform_article_publishing(
+        {headline, summary, body},
+        body,
+        source_ids,
+        significant_change?,
+        recency_window_hours,
+        rumour?
+      )
 
     finalized_result =
       case result do
@@ -101,6 +93,38 @@ defmodule LeythersCom.Content do
 
     emit_ai_editorial_telemetry(finalized_result, started_at, rumour?, significant_change?)
     finalized_result
+  end
+
+  defp perform_article_publishing(_parts, _raw_body, [], _significant, _recency, _rumour) do
+    {:error, :source_ids_required}
+  end
+
+  defp perform_article_publishing(
+         {headline, summary, body},
+         raw_body,
+         source_ids,
+         significant_change?,
+         recency_window_hours,
+         rumour?
+       ) do
+    case Voice.apply_to_output(
+           %{headline: headline, summary: summary, body: body},
+           rumour: rumour?
+         ) do
+      {:ok, voiced_output} ->
+        Repo.transaction(fn ->
+          publish_or_update_ai_decision(
+            voiced_output,
+            raw_body,
+            source_ids,
+            significant_change?,
+            recency_window_hours
+          )
+        end)
+
+      {:error, voice_issues} ->
+        {:error, {:voice_validation_failed, voice_issues}}
+    end
   end
 
   def get_article!(id), do: Repo.get!(PermanentArticle, id)
@@ -246,12 +270,13 @@ defmodule LeythersCom.Content do
     end)
   end
 
-  defp create_ai_article(voiced, raw_body, source_ids) do
-    {:ok, slug} = Slug.unique_for_title(voiced.title)
+  defp create_ai_article(voiced_output, raw_body, source_ids) do
+    {:ok, slug} = Slug.unique_for_title(voiced_output.headline)
 
     article_attrs = %{
-      title: voiced.title,
-      body: voiced.body,
+      title: voiced_output.headline,
+      summary: voiced_output.summary,
+      body: voiced_output.body,
       slug: slug,
       author_type: "ai_editor",
       status: "published",
@@ -268,32 +293,33 @@ defmodule LeythersCom.Content do
   end
 
   defp publish_or_update_ai_decision(
-         voiced,
+         voiced_output,
          raw_body,
          source_ids,
          true,
          _recency_window_hours
        ) do
-    create_ai_article(voiced, raw_body, source_ids)
+    create_ai_article(voiced_output, raw_body, source_ids)
   end
 
   defp publish_or_update_ai_decision(
-         voiced,
+         voiced_output,
          raw_body,
          source_ids,
          false,
          recency_window_hours
        ) do
-    case find_recent_matching_ai_article(voiced.title, recency_window_hours) do
-      nil -> create_ai_article(voiced, raw_body, source_ids)
-      article -> update_ai_article(article, voiced, raw_body, source_ids)
+    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours) do
+      nil -> create_ai_article(voiced_output, raw_body, source_ids)
+      article -> update_ai_article(article, voiced_output, raw_body, source_ids)
     end
   end
 
-  defp update_ai_article(article, voiced, raw_body, source_ids) do
+  defp update_ai_article(article, voiced_output, raw_body, source_ids) do
     attrs = %{
-      title: voiced.title,
-      body: voiced.body,
+      title: voiced_output.headline,
+      summary: voiced_output.summary,
+      body: voiced_output.body,
       raw_content_backup: raw_body,
       status: "published"
     }
