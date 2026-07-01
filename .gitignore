@@ -35,3 +35,5 @@ leythers_com-*.tar
 npm-debug.log
 /assets/node_modules/
 
+# Ignore IDE/editor specific files and folders.
+/.vscode/
