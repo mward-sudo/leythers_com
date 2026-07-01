@@ -98,10 +98,14 @@ defmodule LeythersCom.Intelligence.LLMClient.Ollama do
         )
 
       {:error, {:request_failed, status, _body}} ->
-        Logger.warning("llm_response status=request_failed http_status=#{status} elapsed_ms=#{elapsed_ms}")
+        Logger.warning(
+          "llm_response status=request_failed http_status=#{status} elapsed_ms=#{elapsed_ms}"
+        )
 
       {:error, reason} ->
-        Logger.warning("llm_response status=error reason=#{inspect(reason)} elapsed_ms=#{elapsed_ms}")
+        Logger.warning(
+          "llm_response status=error reason=#{inspect(reason)} elapsed_ms=#{elapsed_ms}"
+        )
     end
   end
 

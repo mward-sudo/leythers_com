@@ -245,7 +245,8 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
           source_input_snapshot: %{},
           change_summary: "created article",
           change_details: %{outcome: "created"},
-          llm_prompt: "Write a Leythers-style rugby article in three parts using these source notes.",
+          llm_prompt:
+            "Write a Leythers-style rugby article in three parts using these source notes.",
           llm_output: "HEADLINE: Test"
         })
 

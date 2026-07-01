@@ -968,33 +968,98 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
   defp normalize_timestamp(%DateTime{} = timestamp), do: timestamp
   defp normalize_timestamp(_), do: DateTime.utc_now()
 
-  defp llm_operation_label(%{llm_prompt: prompt}) when is_binary(prompt) do
-    cond do
-      String.contains?(prompt, "Write a Leythers-style rugby article") ->
+  defp llm_operation_label(event) do
+    # Check change_details for prompt_version (most reliable for LLM operations)
+    change_details_to_operation_label(event) ||
+      change_summary_to_operation_label(event) ||
+      decision_action_to_operation_label(event) ||
+      llm_prompt_label(event)
+  end
+
+  defp change_details_to_operation_label(%{change_details: details}) when is_map(details) do
+    case details do
+      %{"prompt_version" => "source_editorial_v1"} ->
         "Generate article draft"
 
-      String.contains?(
-        prompt,
-        "Determine if two rugby headlines describe the same core story event"
-      ) ->
-        "Compare headlines for same story"
-
-      String.contains?(prompt, "Score homepage importance from 0 to 100") ->
+      %{"prompt_version" => "homepage_ranker_v1"} ->
         "Score homepage importance"
 
-      String.contains?(prompt, "rugby") or String.contains?(prompt, "article") ->
-        "Process article"
+      %{"prompt_version" => version} when is_binary(version) ->
+        if String.contains?(version, ["comparison", "headline"]) do
+          "Compare headlines for same story"
+        end
 
-      true ->
+      _ ->
         nil
     end
   end
 
-  defp llm_operation_label(%{decision_action: action}) when is_binary(action) and action != "" do
-    action
+  defp change_details_to_operation_label(_event), do: nil
+
+  defp change_summary_to_operation_label(%{change_summary: summary}) when is_binary(summary) do
+    patterns = [
+      {"llm_draft", "Generate article draft"},
+      {"significance", "Score homepage importance"},
+      {"score", "Score homepage importance"},
+      {"headline", "Compare headlines for same story"},
+      {"grouping", "Compare headlines for same story"},
+      {"clustered", "Cluster and group sources"}
+    ]
+
+    Enum.find_value(patterns, fn {pattern, label} ->
+      if String.contains?(summary, pattern) do
+        label
+      end
+    end)
   end
 
-  defp llm_operation_label(_event), do: nil
+  defp change_summary_to_operation_label(_event), do: nil
+
+  defp decision_action_to_operation_label(%{decision_action: action})
+       when is_binary(action) and action != "" do
+    patterns = [
+      {"headline", "Compare headlines for same story"},
+      {"grouping", "Compare headlines for same story"},
+      {"similar", "Compare headlines for same story"},
+      {"draft", "Generate article draft"},
+      {"generate", "Generate article draft"},
+      {"article", "Generate article draft"},
+      {"score", "Score homepage importance"},
+      {"importance", "Score homepage importance"},
+      {"rank", "Score homepage importance"},
+      {"cluster", "Cluster and group sources"},
+      {"group", "Cluster and group sources"},
+      {"processed", "Publish article"},
+      {"published", "Publish article"}
+    ]
+
+    Enum.find_value(patterns, fn {pattern, label} ->
+      if String.contains?(action, pattern) do
+        label
+      end
+    end)
+  end
+
+  defp decision_action_to_operation_label(_event), do: nil
+
+  defp llm_prompt_label(%{llm_prompt: prompt}) when is_binary(prompt) do
+    patterns = [
+      {"Write a Leythers-style rugby article", "Generate article draft"},
+      {"Determine if two rugby headlines describe the same core story event",
+       "Compare headlines for same story"},
+      {"Score homepage importance from 0 to 100", "Score homepage importance"},
+      {"rugby", "Process article"},
+      {"article", "Process article"}
+    ]
+
+    Enum.find_value(patterns, fn {pattern, label} ->
+      if String.contains?(prompt, pattern) do
+        label
+      end
+    end)
+  end
+
+  defp llm_prompt_label(_event), do: nil
 
   defp ingestion_event?(%{worker: worker}) when is_binary(worker) do
     String.contains?(worker, "Ingestion")
