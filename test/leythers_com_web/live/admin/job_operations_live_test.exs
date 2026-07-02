@@ -5,6 +5,9 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
   import Ecto.Query
   import Phoenix.LiveViewTest
 
+  alias LeythersCom.Content
+  alias LeythersCom.Content.ArticleSource
+  alias LeythersCom.Content.PermanentArticle
   alias LeythersCom.Ingestion
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Intelligence
@@ -344,7 +347,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert html =~ "Feed Ingestion"
     end
 
-    test "regenerates all processed sources from admin controls", %{conn: conn} do
+    test "regen all resets article/source data and queues ingestion", %{conn: conn} do
       running_job =
         create_job(
           "executing",
@@ -379,18 +382,51 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
 
       _ = processed_b |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
 
+      {:ok, ignored_source} =
+        Ingestion.create_raw_source(%{
+          title: "All Regen Ignored",
+          url: "https://example.com/all-regen-ignored",
+          origin_provider: "job_ops_regen",
+          external_published_at: ~U[2026-06-20 10:00:00.000000Z]
+        })
+
+      _ = ignored_source |> RawSource.changeset(%{status: "ignored"}) |> Repo.update!()
+
+      {:ok, article} =
+        Content.create_article(%{
+          title: "Reset Me",
+          slug: "reset-me-#{Ecto.UUID.generate()}",
+          body: "Body",
+          summary: "Summary",
+          author_type: "ai_editor",
+          status: "published",
+          version: 1
+        })
+
+      {:ok, _article_source} =
+        %ArticleSource{}
+        |> ArticleSource.changeset(%{
+          permanent_article_id: article.id,
+          raw_source_id: processed_a.id
+        })
+        |> Repo.insert()
+
       {:ok, view, _html} = live(conn, ~p"/admin/jobs")
 
       view
       |> element("#regenerate-all-button")
       |> render_click()
 
-      assert render(view) =~ "Queued full regeneration"
+      assert render(view) =~ "Reset data"
       assert render(view) =~ "Cancelled 2 job(s)"
       assert Repo.get!(Job, running_job.id).id == running_job.id
       assert Repo.get!(Job, queued_job.id).id == queued_job.id
-      assert Repo.get!(RawSource, processed_a.id).status == "pending"
-      assert Repo.get!(RawSource, processed_b.id).status == "pending"
+
+      assert Repo.get(RawSource, processed_a.id) == nil
+      assert Repo.get(RawSource, processed_b.id) == nil
+      assert Repo.get(RawSource, ignored_source.id) == nil
+      assert Repo.get(PermanentArticle, article.id) == nil
+      assert Repo.aggregate(ArticleSource, :count, :id) == 0
     end
 
     test "regenerates only recent processed sources from admin controls", %{conn: conn} do

@@ -256,6 +256,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             }
           )
 
+        {:error, :no_relevant_sources} ->
+          handle_irrelevant_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot)
+
         {:error, reason} ->
           {:error, {:llm_unavailable, reason}}
       end
@@ -396,9 +399,52 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> elem(0)
   end
 
+  defp mark_sources_ignored([]), do: 0
+
+  defp mark_sources_ignored(source_ids) do
+    from(source in RawSource, where: source.id in ^source_ids)
+    |> Repo.update_all(set: [status: "ignored"])
+    |> elem(0)
+  end
+
+  defp handle_irrelevant_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot) do
+    summary =
+      "sources #{length(source_ids)} skipped as irrelevant for draft (no relevant source content)"
+
+    llm_cost_attrs = zero_cost_attrs()
+
+    persist_decision(
+      decision_attrs,
+      "skipped_irrelevant",
+      nil,
+      summary,
+      llm_cost_attrs
+    )
+
+    persist_job_effect_event(job, %{
+      decision_action: "skipped_irrelevant",
+      permanent_article_id: nil,
+      process_run_id: run_id,
+      source_ids: source_ids,
+      source_input_snapshot: cluster_snapshot,
+      change_summary: summary,
+      change_details: %{
+        source_count: length(source_ids),
+        run_id: run_id,
+        prompt_version: prompt_version(),
+        llm_cost: llm_cost_attrs,
+        reason: "no_relevant_sources"
+      },
+      error_summary: nil
+    })
+
+    ignored_count = mark_sources_ignored(source_ids)
+    {:ok, ignored_count}
+  end
+
   defp build_article_attrs(cluster_sources) do
     primary = List.first(cluster_sources)
-    summary_fallback = article_summary(cluster_sources)
+    summary_fallback = deterministic_article_summary(cluster_sources)
     rumour? = rumour_cluster?(cluster_sources)
 
     if llm_draft_enabled?() do
@@ -414,8 +460,18 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp llm_draft_attrs(cluster_sources, rumour?) do
-    prompt = llm_prompt(cluster_sources, rumour?)
+    case relevant_sources_for_draft(cluster_sources) do
+      [] ->
+        {:error, :no_relevant_sources}
 
+      relevant_sources ->
+        relevant_sources
+        |> llm_prompt(rumour?)
+        |> run_llm_draft()
+    end
+  end
+
+  defp run_llm_draft(prompt) do
     # Run LLM draft generation in a supervised task so we can fail fast and retry quickly.
     case run_with_timeout(fn ->
            LLMClient.generate(prompt, timeout_ms: llm_draft_timeout_ms())
@@ -455,9 +511,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
     {headline, summary, body} = extract_draft_parts(lines)
 
-    sanitized_headline = sanitize_plain_text(headline)
-    sanitized_summary = sanitize_plain_text(summary)
-    sanitized_body = sanitize_plain_text(body)
+    sanitized_headline = sanitize_plain_text_strict(headline)
+    sanitized_summary = sanitize_plain_text_strict(summary)
+    sanitized_body = sanitize_plain_text_strict(body)
 
     if blank?(sanitized_headline) or blank?(sanitized_summary) or blank?(sanitized_body) do
       :error
@@ -529,7 +585,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     Rumour: #{rumour?}
 
     Source notes:
-    #{article_summary(cluster_sources)}
+    #{llm_source_notes(cluster_sources)}
     """
   end
 
@@ -567,10 +623,37 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   defp estimate_tokens(_), do: 1
 
-  defp article_summary(cluster_sources) do
+  defp llm_source_notes(cluster_sources) do
+    cluster_sources
+    |> Enum.with_index(1)
+    |> Enum.map_join("\n\n", fn {source, idx} ->
+      full_text =
+        source.content
+        |> sanitize_plain_text_strict()
+
+      title =
+        source.title
+        |> sanitize_plain_text_strict()
+        |> fallback_text("(untitled source)")
+
+      provider = fallback_text(source.origin_provider, "unknown_provider")
+      source_url = fallback_text(source.url, "(no_url)")
+
+      """
+      SOURCE #{idx}:
+      PROVIDER: #{provider}
+      URL: #{source_url}
+      HEADLINE: #{title}
+      FULL_TEXT:
+      #{full_text}
+      """
+    end)
+    |> then(&"Consider only these relevant source articles:\n\n#{&1}")
+  end
+
+  defp deterministic_article_summary(cluster_sources) do
     cluster_sources
     |> Enum.map_join("\n", fn source ->
-      # Prefer full content if available; fall back to body_summary
       raw_text = source.content || source.body_summary || ""
       summary = raw_text |> sanitize_plain_text() |> truncate_for_prompt(500)
       "- #{source.origin_provider}: #{summary}"
@@ -604,6 +687,47 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp sanitize_plain_text(_), do: "No summary available from source feed."
+
+  defp sanitize_plain_text_strict(summary) when is_binary(summary) do
+    summary
+    |> String.replace("\u00A0", " ")
+    |> strip_html()
+    |> String.replace("\u00A0", " ")
+    |> String.replace(~r/\s+/, " ")
+    |> String.replace(~r/\s+([,.;:!?])/, "\\1")
+    |> String.trim()
+  end
+
+  defp sanitize_plain_text_strict(_), do: ""
+
+  defp relevant_sources_for_draft(cluster_sources) do
+    cluster_sources
+    |> Enum.filter(fn source ->
+      content = sanitize_plain_text_strict(source.content)
+      title = sanitize_plain_text_strict(source.title)
+
+      not blank?(content) and not blank?(title) and relevant_to_leigh?(source)
+    end)
+  end
+
+  defp relevant_to_leigh?(source) do
+    [source.title, source.content, source.body_summary]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join(" ")
+    |> String.downcase()
+    |> then(fn text ->
+      Enum.any?(
+        ["leigh", "leopards", "leythers", "adrian lam", "lam"],
+        &String.contains?(text, &1)
+      )
+    end)
+  end
+
+  defp fallback_text(text, fallback) when is_binary(text) do
+    if String.trim(text) == "", do: fallback, else: text
+  end
+
+  defp fallback_text(_text, fallback), do: fallback
 
   defp strip_html(text) do
     case Floki.parse_fragment(text) do

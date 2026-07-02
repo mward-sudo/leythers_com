@@ -2,8 +2,11 @@ defmodule LeythersCom.IngestionTest do
   use LeythersCom.DataCase, async: true
 
   alias Ecto.UUID
+  alias LeythersCom.Content
+  alias LeythersCom.Content.ArticleSource
   alias LeythersCom.Ingestion
   alias LeythersCom.Ingestion.RawSource
+  alias LeythersCom.Repo
 
   @valid_attrs %{
     title: "Leigh Leopards win again",
@@ -246,7 +249,7 @@ defmodule LeythersCom.IngestionTest do
   end
 
   describe "enqueue_article_regeneration/2" do
-    test "re-queues all processed sources when scope is all" do
+    test "re-queues all processed and ignored sources when scope is all" do
       {:ok, processed_a} =
         Ingestion.create_raw_source(%{
           title: "Processed A",
@@ -267,6 +270,16 @@ defmodule LeythersCom.IngestionTest do
 
       _ = processed_b |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
 
+      {:ok, ignored_source} =
+        Ingestion.create_raw_source(%{
+          title: "Ignored Source",
+          url: "https://example.com/ignored-source",
+          origin_provider: "regen_test",
+          external_published_at: ~U[2026-06-15 10:00:00.000000Z]
+        })
+
+      _ = ignored_source |> RawSource.changeset(%{status: "ignored"}) |> Repo.update!()
+
       {:ok, pending} =
         Ingestion.create_raw_source(%{
           title: "Already Pending",
@@ -276,15 +289,16 @@ defmodule LeythersCom.IngestionTest do
           external_published_at: ~U[2026-06-28 10:00:00.000000Z]
         })
 
-      assert {:ok, %{requeued_sources: 2, scope: :all}} =
+      assert {:ok, %{requeued_sources: 3, scope: :all}} =
                Ingestion.enqueue_article_regeneration(:all, enqueue_worker: false)
 
       assert Repo.get!(RawSource, processed_a.id).status == "pending"
       assert Repo.get!(RawSource, processed_b.id).status == "pending"
+      assert Repo.get!(RawSource, ignored_source.id).status == "pending"
       assert Repo.get!(RawSource, pending.id).status == "pending"
     end
 
-    test "re-queues only recent processed sources when scope is recent" do
+    test "re-queues only recent processed and ignored sources when scope is recent" do
       now = ~U[2026-06-29 12:00:00.000000Z]
 
       {:ok, recent_processed} =
@@ -307,14 +321,100 @@ defmodule LeythersCom.IngestionTest do
 
       _ = old_processed |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
 
-      assert {:ok, %{requeued_sources: 1, scope: :recent}} =
+      {:ok, recent_ignored} =
+        Ingestion.create_raw_source(%{
+          title: "Recent Ignored",
+          url: "https://example.com/recent-ignored",
+          origin_provider: "regen_test",
+          external_published_at: ~U[2026-06-24 10:00:00.000000Z]
+        })
+
+      _ = recent_ignored |> RawSource.changeset(%{status: "ignored"}) |> Repo.update!()
+
+      {:ok, old_ignored} =
+        Ingestion.create_raw_source(%{
+          title: "Old Ignored",
+          url: "https://example.com/old-ignored",
+          origin_provider: "regen_test",
+          external_published_at: ~U[2026-05-01 11:00:00.000000Z]
+        })
+
+      _ = old_ignored |> RawSource.changeset(%{status: "ignored"}) |> Repo.update!()
+
+      assert {:ok, %{requeued_sources: 2, scope: :recent}} =
                Ingestion.enqueue_article_regeneration(:recent,
                  now: now,
                  enqueue_worker: false
                )
 
       assert Repo.get!(RawSource, recent_processed.id).status == "pending"
+      assert Repo.get!(RawSource, recent_ignored.id).status == "pending"
       assert Repo.get!(RawSource, old_processed.id).status == "processed"
+      assert Repo.get!(RawSource, old_ignored.id).status == "ignored"
+    end
+  end
+
+  describe "reset_article_and_source_data/1" do
+    test "deletes article/source rows and optionally skips feed enqueue" do
+      {:ok, source} =
+        Ingestion.create_raw_source(%{
+          title: "Source for reset",
+          url: "https://example.com/reset-source",
+          origin_provider: "reset_test",
+          external_published_at: ~U[2026-06-30 10:00:00.000000Z]
+        })
+
+      {:ok, article} =
+        Content.create_article(%{
+          title: "Reset Article",
+          slug: "reset-article-#{UUID.generate()}",
+          body: "Reset body",
+          summary: "Reset summary",
+          author_type: "ai_editor",
+          status: "published",
+          version: 1
+        })
+
+      {:ok, _article_source} =
+        %ArticleSource{}
+        |> ArticleSource.changeset(%{permanent_article_id: article.id, raw_source_id: source.id})
+        |> Repo.insert()
+
+      assert {:ok,
+              %{
+                deleted_article_sources: 1,
+                deleted_articles: 1,
+                deleted_raw_sources: 1,
+                enqueued_feed_jobs: 0,
+                failed_feed_jobs: 0
+              }} = Ingestion.reset_article_and_source_data(enqueue_feeds: false)
+
+      assert Repo.aggregate(ArticleSource, :count, :id) == 0
+      assert Repo.aggregate(LeythersCom.Content.PermanentArticle, :count, :id) == 0
+      assert Repo.aggregate(RawSource, :count, :id) == 0
+    end
+
+    test "enqueues configured feed fetch jobs after reset" do
+      feeds = [
+        %{url: "https://example.com/a", origin_provider: "provider_a"},
+        %{url: "https://example.com/b", origin_provider: "provider_b"}
+      ]
+
+      enqueue_fun = fn
+        %{origin_provider: "provider_a"} -> {:ok, %{id: 1}}
+        %{origin_provider: "provider_b"} -> {:error, :queue_full}
+      end
+
+      assert {:ok,
+              %{
+                enqueued_feed_jobs: 1,
+                failed_feed_jobs: 1
+              }} =
+               Ingestion.reset_article_and_source_data(
+                 enqueue_feeds: true,
+                 feeds: feeds,
+                 enqueue_fun: enqueue_fun
+               )
     end
   end
 

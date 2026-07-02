@@ -37,6 +37,41 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     end
   end
 
+  defmodule PromptContractDraftAdapter do
+    @moduledoc false
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(prompt, _opts) do
+      if String.contains?(prompt, "HEADLINE:") and String.contains?(prompt, "FULL_TEXT:") and
+           String.contains?(prompt, "Leigh source content contract body") do
+        {:ok,
+         %{
+           text:
+             "HEADLINE: Leigh Source Contract Holds\nSUMMARY: Prompt includes required source details.\nBODY:\nBody confirms source headline and full text were provided.",
+           model: "prompt-contract"
+         }}
+      else
+        {:error, :missing_source_payload_contract}
+      end
+    end
+  end
+
+  defmodule MissingHeadlineDraftAdapter do
+    @moduledoc false
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(_prompt, _opts) do
+      {:ok,
+       %{
+         text:
+           "SUMMARY: Source summary only\nBODY:\nDraft body without a headline should be rejected.",
+         model: "missing-headline"
+       }}
+    end
+  end
+
   defmodule FakeClusteringAdapter do
     @moduledoc false
     @behaviour LeythersCom.Intelligence.LLMClient
@@ -174,6 +209,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       Ingestion.create_raw_source(%{
         title: "Leigh model draft test",
         url: "https://example.com/llm-draft-test",
+        content: "Leigh source content contract body for model draft sanitization.",
         body_summary: "Clean source summary for model draft path.",
         origin_provider: "test_feed",
         external_published_at: ~U[2026-06-29 08:30:00.000000Z]
@@ -219,6 +255,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       Ingestion.create_raw_source(%{
         title: "Leigh model unavailable test",
         url: "https://example.com/llm-unavailable-test",
+        content: "Leigh source content contract body while upstream is unavailable.",
         body_summary: "Source summary while upstream is unavailable.",
         origin_provider: "test_feed",
         external_published_at: ~U[2026-06-29 08:45:00.000000Z]
@@ -231,6 +268,121 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     [source] = Ingestion.list_raw_sources(status: "pending")
     assert source.title =~ "unavailable"
+  end
+
+  test "rejects llm draft responses missing headline instead of publishing placeholder headline" do
+    Application.put_env(:leythers_com, :llm,
+      adapter: MissingHeadlineDraftAdapter,
+      model: "missing-headline"
+    )
+
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: true,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh malformed draft response test",
+        url: "https://example.com/malformed-draft-response-test",
+        content: "Leigh source content contract body for malformed draft response.",
+        body_summary: "Source summary for malformed response.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 08:55:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert ai_articles == []
+
+    source_after = Repo.get!(RawSource, source.id)
+    assert source_after.status == "pending"
+  end
+
+  test "passes source headline and full content into llm prompt" do
+    Application.put_env(:leythers_com, :llm,
+      adapter: PromptContractDraftAdapter,
+      model: "prompt-contract"
+    )
+
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: true,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, _source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh source payload contract test",
+        url: "https://example.com/source-payload-contract-test",
+        content: "Leigh source content contract body",
+        body_summary: "Fallback summary should not be required here.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 09:05:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    [article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert article.title == "Leigh Source Contract Holds"
+  end
+
+  test "marks source ignored when no relevant source content is available" do
+    Application.put_env(:leythers_com, :llm,
+      adapter: FakeTriageAdapter,
+      model: "fake-triage"
+    )
+
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: true,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh source without full content",
+        url: "https://example.com/no-relevant-content",
+        body_summary: "Leigh mention exists but no full content field is present.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 09:15:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    source_after = Repo.get!(RawSource, source.id)
+    assert source_after.status == "ignored"
+
+    assert Ingestion.list_raw_sources(status: "pending") == []
   end
 
   test "uses configured worker timeout for execution guard" do

@@ -5,6 +5,8 @@ defmodule LeythersCom.Ingestion do
 
   import Ecto.Query
 
+  alias LeythersCom.Content.ArticleSource
+  alias LeythersCom.Content.PermanentArticle
   alias LeythersCom.Ingestion.ArticleContentFetcher
   alias LeythersCom.Ingestion.FetchRssFeedWorker
   alias LeythersCom.Ingestion.HttpClient.Req
@@ -102,7 +104,7 @@ defmodule LeythersCom.Ingestion do
 
     requeued_sources =
       RawSource
-      |> where([source], source.status == "processed")
+      |> where([source], source.status in ["processed", "ignored"])
       |> maybe_filter_regeneration_scope(scope, now)
       |> Repo.update_all(set: [status: "pending"])
       |> elem(0)
@@ -112,12 +114,57 @@ defmodule LeythersCom.Ingestion do
 
   def enqueue_article_regeneration(_scope, _opts), do: {:error, :invalid_scope}
 
+  def reset_article_and_source_data(opts \\ []) do
+    enqueue_feeds? = Keyword.get(opts, :enqueue_feeds, true)
+    enqueue_fun = Keyword.get(opts, :enqueue_fun, &enqueue_feed_fetch/1)
+    feeds = Keyword.get(opts, :feeds, configured_feeds())
+
+    with {:ok, delete_stats} <- delete_article_and_source_rows(),
+         {:ok, enqueue_stats} <- enqueue_reset_feed_fetches(enqueue_feeds?, feeds, enqueue_fun) do
+      {:ok, Map.merge(delete_stats, enqueue_stats)}
+    end
+  end
+
   def feed_enqueue_unique_opts do
     [
       fields: [:worker, :args],
       period: enqueue_dedupe_seconds(),
       states: [:available, :scheduled, :executing, :retryable, :completed]
     ]
+  end
+
+  defp delete_article_and_source_rows do
+    Repo.transaction(fn ->
+      {deleted_article_sources, _} = Repo.delete_all(ArticleSource)
+      {deleted_articles, _} = Repo.delete_all(PermanentArticle)
+      {deleted_raw_sources, _} = Repo.delete_all(RawSource)
+
+      %{
+        deleted_article_sources: deleted_article_sources,
+        deleted_articles: deleted_articles,
+        deleted_raw_sources: deleted_raw_sources
+      }
+    end)
+  end
+
+  defp enqueue_reset_feed_fetches(false, _feeds, _enqueue_fun) do
+    {:ok, %{enqueued_feed_jobs: 0, failed_feed_jobs: 0}}
+  end
+
+  defp enqueue_reset_feed_fetches(true, feeds, enqueue_fun) do
+    {enqueued_feed_jobs, failed_feed_jobs} =
+      feeds
+      |> Enum.map(enqueue_fun)
+      |> Enum.reduce({0, 0}, fn
+        {:ok, _job}, {ok_count, error_count} -> {ok_count + 1, error_count}
+        _other, {ok_count, error_count} -> {ok_count, error_count + 1}
+      end)
+
+    {:ok,
+     %{
+       enqueued_feed_jobs: enqueued_feed_jobs,
+       failed_feed_jobs: failed_feed_jobs
+     }}
   end
 
   def alert_on_stale_feeds(opts \\ []) do
