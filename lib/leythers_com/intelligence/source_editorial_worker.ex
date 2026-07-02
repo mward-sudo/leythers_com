@@ -17,6 +17,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.LLMClient
+  alias LeythersCom.Intelligence.StorySimilarity
   alias LeythersCom.Repo
 
   @default_batch_size 100
@@ -26,11 +27,42 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_enqueue_unique_seconds 3_600
   @default_worker_timeout_ms 30_000
   @default_llm_draft_timeout_ms 7_500
+  @default_llm_significance_timeout_ms 2_500
   @default_dispatch_delay_ms 2_000
   @default_dispatch_delay_max_ms 15_000
   @default_retry_base_seconds 1
   @default_retry_max_seconds 15
   @default_retry_persist_threshold 3
+  @default_full_rerank_source_limit 200
+  @default_full_rerank_homepage_size 12
+  @min_article_body_chars 750
+  @min_article_body_paragraphs 4
+  @headline_source_similarity_threshold 0.82
+  @headline_recent_similarity_threshold 0.72
+  @article_similarity_update_threshold 0.45
+
+  @generic_headline_patterns [
+    "continue to impress",
+    "latest news and updates",
+    "current performance and upcoming matches",
+    "look to make a statement",
+    "face challenging weather conditions",
+    "set for brutal weather challenge"
+  ]
+
+  @generic_summary_patterns [
+    "the match is expected to be",
+    "both teams have a lot to play for",
+    "have been in impressive form lately",
+    "looking to make a statement",
+    "several wins in the super league"
+  ]
+
+  @generic_body_patterns [
+    "looking to make a statement",
+    "in impressive form lately",
+    "a lot to play for"
+  ]
 
   def enqueue(attrs \\ %{}) when is_map(attrs) do
     # Always use a canonical dispatch task key so that cluster tasks (which share
@@ -94,20 +126,36 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     source_limit = Map.get(args, "source_limit", default_batch_size())
     max_batches = Map.get(args, "max_batches", max_batches_per_run())
     drain_backlog? = Map.get(args, "drain_backlog", true)
+    full_rerank? = Map.get(args, "full_rerank", drain_backlog?)
     run_id = Ecto.UUID.generate()
 
-    dispatch_cluster_tasks(job, run_id, source_limit, max_batches, drain_backlog?)
+    dispatch_cluster_tasks(job, run_id, source_limit, max_batches, drain_backlog?, full_rerank?)
   end
 
-  defp dispatch_cluster_tasks(_job, _run_id, _source_limit, max_batches, _drain_backlog?)
+  defp dispatch_cluster_tasks(
+         _job,
+         _run_id,
+         _source_limit,
+         max_batches,
+         _drain_backlog?,
+         _full_rerank?
+       )
        when max_batches <= 0,
        do: :ok
 
-  defp dispatch_cluster_tasks(job, run_id, source_limit, max_batches, drain_backlog?) do
+  defp dispatch_cluster_tasks(
+         job,
+         run_id,
+         source_limit,
+         max_batches,
+         drain_backlog?,
+         full_rerank?
+       ) do
     pending_sources = fetch_pending_sources(source_limit)
 
     case pending_sources do
       [] ->
+        maybe_trigger_full_rerank(full_rerank?)
         :ok
 
       _ ->
@@ -115,7 +163,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         |> enqueue_source_jobs(run_id)
         |> case do
           :ok ->
-            maybe_continue_dispatch(job, run_id, source_limit, max_batches, drain_backlog?)
+            maybe_continue_dispatch(
+              job,
+              run_id,
+              source_limit,
+              max_batches,
+              drain_backlog?,
+              full_rerank?
+            )
 
           {:error, reason} ->
             {:error, reason}
@@ -167,19 +222,27 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
          _run_id,
          _source_limit,
          _max_batches,
-         false
+         false,
+         _full_rerank?
        ),
        do: :ok
 
-  defp maybe_continue_dispatch(_job, _run_id, _source_limit, max_batches, _drain_backlog?)
+  defp maybe_continue_dispatch(
+         _job,
+         _run_id,
+         _source_limit,
+         max_batches,
+         _drain_backlog?,
+         _full_rerank?
+       )
        when max_batches <= 1,
        do: :ok
 
-  defp maybe_continue_dispatch(job, run_id, source_limit, max_batches, true) do
+  defp maybe_continue_dispatch(job, run_id, source_limit, max_batches, true, full_rerank?) do
     if oban_inline_testing?() do
-      dispatch_cluster_tasks(job, run_id, source_limit, max_batches - 1, true)
+      dispatch_cluster_tasks(job, run_id, source_limit, max_batches - 1, true, full_rerank?)
     else
-      enqueue_dispatch_continuation()
+      enqueue_dispatch_continuation(full_rerank?)
     end
   end
 
@@ -189,11 +252,15 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> Keyword.get(:testing) == :inline
   end
 
-  defp enqueue_dispatch_continuation do
+  defp enqueue_dispatch_continuation(full_rerank?) do
     delay_seconds = div(dispatch_delay_ms(), 1_000) |> max(1)
     generation_settings = current_generation_settings()
 
-    %{"task" => "dispatch", "generation_settings" => generation_settings}
+    %{
+      "task" => "dispatch",
+      "generation_settings" => generation_settings,
+      "full_rerank" => full_rerank?
+    }
     |> new(
       schedule_in: delay_seconds,
       unique: [
@@ -206,6 +273,19 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
     :ok
   end
+
+  defp maybe_trigger_full_rerank(true) do
+    _ =
+      EditorialOrchestrator.run_source_update_refresh(
+        source_limit: full_rerank_source_limit(),
+        homepage_size: full_rerank_homepage_size(),
+        async: false
+      )
+
+    :ok
+  end
+
+  defp maybe_trigger_full_rerank(_), do: :ok
 
   defp process_cluster_task(%Oban.Job{args: args} = job) do
     run_id = Map.get(args, "process_run_id", Ecto.UUID.generate())
@@ -237,6 +317,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp fetch_sources_by_ids(_source_ids), do: []
 
   defp publish_cluster(job, cluster_sources, run_id) do
+    started_at = System.monotonic_time()
     source_ids = Enum.map(cluster_sources, & &1.id)
     significance_score = significance_score(cluster_sources)
     threshold = significance_threshold()
@@ -259,6 +340,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             job,
             attrs,
             %{
+              started_at: started_at,
               source_ids: source_ids,
               run_id: run_id,
               cluster_snapshot: cluster_snapshot,
@@ -276,14 +358,29 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             source_ids,
             run_id,
             decision_attrs,
-            cluster_snapshot
+            cluster_snapshot,
+            started_at
           )
 
         {:error, :no_relevant_sources} ->
-          handle_irrelevant_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot)
+          handle_irrelevant_cluster(
+            job,
+            source_ids,
+            run_id,
+            decision_attrs,
+            cluster_snapshot,
+            started_at
+          )
 
         {:error, :invalid_llm_draft_response} ->
-          handle_invalid_draft_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot)
+          handle_invalid_draft_cluster(
+            job,
+            source_ids,
+            run_id,
+            decision_attrs,
+            cluster_snapshot,
+            started_at
+          )
 
         {:error, reason} ->
           {:error, {:llm_unavailable, reason}}
@@ -319,6 +416,19 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         error_summary: nil
       })
 
+      emit_decision_telemetry(started_at, %{
+        result: :ok,
+        decision_action: "skipped_budget",
+        triage_action: "budget_blocked",
+        source_count: length(source_ids),
+        significance_score: significance_score,
+        significance_threshold: threshold,
+        prompt_version: prompt_version(),
+        llm_input_tokens: 0,
+        llm_output_tokens: 0,
+        target_article_id: nil
+      })
+
       {:halt, :budget_blocked}
     end
   end
@@ -327,6 +437,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
          job,
          attrs,
          %{
+           started_at: started_at,
            source_ids: source_ids,
            run_id: run_id,
            cluster_snapshot: cluster_snapshot,
@@ -337,83 +448,163 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
            llm_cost_attrs: llm_cost_attrs
          }
        ) do
-    case Content.publish_or_update_ai_article(attrs, source_ids,
-           rumour: rumour?,
-           significant_change: significance_score >= threshold
-         ) do
-      {:ok, action, article} ->
-        processed_count = mark_sources_processed(source_ids)
-        _ = EditorialOrchestrator.trigger_source_update_refresh()
+    triage_action = Map.get(attrs, :triage_action, :new)
+    target_article_id = Map.get(attrs, :target_article_id)
 
-        action_str = to_string(action)
+    if triage_action == :skip do
+      summary =
+        decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs)
 
-        summary =
-          decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs)
+      persist_decision(
+        decision_attrs,
+        "skipped_irrelevant",
+        nil,
+        summary,
+        llm_cost_attrs
+      )
 
-        persist_decision(
-          decision_attrs,
-          action_str,
-          article.id,
-          summary,
-          llm_cost_attrs
-        )
+      persist_job_effect_event(job, %{
+        decision_action: "skipped_irrelevant",
+        permanent_article_id: nil,
+        process_run_id: run_id,
+        source_ids: source_ids,
+        source_input_snapshot: cluster_snapshot,
+        change_summary: summary,
+        change_details: %{
+          significance_score: significance_score,
+          significance_threshold: threshold,
+          source_count: length(source_ids),
+          run_id: run_id,
+          prompt_version: prompt_version(),
+          llm_cost: llm_cost_attrs,
+          rumour: rumour?
+        },
+        error_summary: nil
+      })
 
-        persist_job_effect_event(job, %{
-          decision_action: action_str,
-          permanent_article_id: article.id,
-          process_run_id: run_id,
-          source_ids: source_ids,
-          source_input_snapshot: cluster_snapshot,
-          change_summary: summary,
-          change_details: %{
+      emit_decision_telemetry(started_at, %{
+        result: :ok,
+        decision_action: "skipped_irrelevant",
+        triage_action: "skip",
+        source_count: length(source_ids),
+        significance_score: significance_score,
+        significance_threshold: threshold,
+        prompt_version: prompt_version(),
+        llm_input_tokens: llm_cost_attrs.input_tokens,
+        llm_output_tokens: llm_cost_attrs.output_tokens,
+        target_article_id: target_article_id
+      })
+
+      ignored_count = mark_sources_ignored(source_ids)
+      {:ok, ignored_count}
+    else
+      case Content.publish_or_update_ai_article(attrs, source_ids,
+             rumour: rumour?,
+             triage_action: triage_action,
+             target_article_id: target_article_id
+           ) do
+        {:ok, action, article} ->
+          processed_count = mark_sources_processed(source_ids)
+          _ = EditorialOrchestrator.trigger_source_update_refresh()
+
+          action_str = to_string(action)
+
+          summary =
+            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs)
+
+          persist_decision(
+            decision_attrs,
+            action_str,
+            article.id,
+            summary,
+            llm_cost_attrs
+          )
+
+          persist_job_effect_event(job, %{
+            decision_action: action_str,
+            permanent_article_id: article.id,
+            process_run_id: run_id,
+            source_ids: source_ids,
+            source_input_snapshot: cluster_snapshot,
+            change_summary: summary,
+            change_details: %{
+              significance_score: significance_score,
+              significance_threshold: threshold,
+              source_count: length(source_ids),
+              run_id: run_id,
+              prompt_version: prompt_version(),
+              llm_cost: llm_cost_attrs,
+              rumour: rumour?
+            },
+            error_summary: nil
+          })
+
+          emit_decision_telemetry(started_at, %{
+            result: :ok,
+            decision_action: action_str,
+            triage_action: to_string(triage_action || action),
+            source_count: length(source_ids),
             significance_score: significance_score,
             significance_threshold: threshold,
-            source_count: length(source_ids),
-            run_id: run_id,
             prompt_version: prompt_version(),
-            llm_cost: llm_cost_attrs,
-            rumour: rumour?
-          },
-          error_summary: nil
-        })
+            llm_input_tokens: llm_cost_attrs.input_tokens,
+            llm_output_tokens: llm_cost_attrs.output_tokens,
+            target_article_id: target_article_id,
+            permanent_article_id: article.id
+          })
 
-        {:ok, processed_count}
+          {:ok, processed_count}
 
-      {:error, reason} ->
-        summary =
-          decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs)
+        {:error, reason} ->
+          summary =
+            decision_summary(significance_score, threshold, source_ids, rumour?, llm_cost_attrs)
 
-        persist_decision(
-          decision_attrs,
-          "skipped_publish_error",
-          nil,
-          summary,
-          llm_cost_attrs
-        )
+          persist_decision(
+            decision_attrs,
+            "skipped_publish_error",
+            nil,
+            summary,
+            llm_cost_attrs
+          )
 
-        persist_job_effect_event(job, %{
-          decision_action: "skipped_publish_error",
-          permanent_article_id: nil,
-          process_run_id: run_id,
-          source_ids: source_ids,
-          source_input_snapshot: cluster_snapshot,
-          change_summary: summary,
-          change_details: %{
+          persist_job_effect_event(job, %{
+            decision_action: "skipped_publish_error",
+            permanent_article_id: nil,
+            process_run_id: run_id,
+            source_ids: source_ids,
+            source_input_snapshot: cluster_snapshot,
+            change_summary: summary,
+            change_details: %{
+              significance_score: significance_score,
+              significance_threshold: threshold,
+              source_count: length(source_ids),
+              run_id: run_id,
+              prompt_version: prompt_version(),
+              llm_cost: llm_cost_attrs,
+              rumour: rumour?
+            },
+            error_summary: inspect(reason)
+          })
+
+          emit_decision_telemetry(started_at, %{
+            result: :error,
+            decision_action: "skipped_publish_error",
+            triage_action: to_string(triage_action),
+            source_count: length(source_ids),
             significance_score: significance_score,
             significance_threshold: threshold,
-            source_count: length(source_ids),
-            run_id: run_id,
             prompt_version: prompt_version(),
-            llm_cost: llm_cost_attrs,
-            rumour: rumour?
-          },
-          error_summary: inspect(reason)
-        })
+            llm_input_tokens: llm_cost_attrs.input_tokens,
+            llm_output_tokens: llm_cost_attrs.output_tokens,
+            target_article_id: target_article_id,
+            error: inspect(reason)
+          })
 
-        # Mark sources as processed to avoid infinite loop on validation errors
-        mark_sources_processed(source_ids)
+          # Mark sources as processed to avoid infinite loop on validation errors
+          mark_sources_processed(source_ids)
 
-        {:ok, 0}
+          {:ok, 0}
+      end
     end
   end
 
@@ -443,7 +634,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end)
   end
 
-  defp handle_irrelevant_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot) do
+  defp handle_irrelevant_cluster(
+         job,
+         source_ids,
+         run_id,
+         decision_attrs,
+         cluster_snapshot,
+         started_at
+       ) do
     summary =
       "sources #{length(source_ids)} skipped as irrelevant for draft (no relevant source content)"
 
@@ -474,6 +672,19 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       error_summary: nil
     })
 
+    emit_decision_telemetry(started_at, %{
+      result: :ok,
+      decision_action: "skipped_irrelevant",
+      triage_action: "irrelevant_filter",
+      source_count: length(source_ids),
+      significance_score: nil,
+      significance_threshold: nil,
+      prompt_version: prompt_version(),
+      llm_input_tokens: 0,
+      llm_output_tokens: 0,
+      target_article_id: nil
+    })
+
     ignored_count = mark_sources_ignored(source_ids)
     {:ok, ignored_count}
   end
@@ -483,7 +694,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
          source_ids,
          run_id,
          decision_attrs,
-         cluster_snapshot
+         cluster_snapshot,
+         started_at
        ) do
     summary =
       "sources #{length(source_ids)} waiting for full content before editorial draft"
@@ -515,10 +727,30 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       error_summary: nil
     })
 
+    emit_decision_telemetry(started_at, %{
+      result: :ok,
+      decision_action: "skipped_waiting_content",
+      triage_action: "waiting_content",
+      source_count: length(source_ids),
+      significance_score: nil,
+      significance_threshold: nil,
+      prompt_version: prompt_version(),
+      llm_input_tokens: 0,
+      llm_output_tokens: 0,
+      target_article_id: nil
+    })
+
     {:ok, 0}
   end
 
-  defp handle_invalid_draft_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot) do
+  defp handle_invalid_draft_cluster(
+         job,
+         source_ids,
+         run_id,
+         decision_attrs,
+         cluster_snapshot,
+         started_at
+       ) do
     summary = "sources #{length(source_ids)} skipped due to invalid llm draft response"
 
     llm_cost_attrs = zero_cost_attrs()
@@ -548,6 +780,19 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       error_summary: nil
     })
 
+    emit_decision_telemetry(started_at, %{
+      result: :ok,
+      decision_action: "skipped_invalid_draft",
+      triage_action: "invalid_draft",
+      source_count: length(source_ids),
+      significance_score: nil,
+      significance_threshold: nil,
+      prompt_version: prompt_version(),
+      llm_input_tokens: 0,
+      llm_output_tokens: 0,
+      target_article_id: nil
+    })
+
     ignored_count = mark_sources_ignored(source_ids)
     {:ok, ignored_count}
   end
@@ -556,16 +801,27 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     primary = List.first(cluster_sources)
     summary_fallback = deterministic_article_summary(cluster_sources)
     rumour? = rumour_cluster?(cluster_sources)
+    relevant_sources = relevant_sources_for_consideration(cluster_sources)
 
-    if llm_draft_enabled?() do
-      llm_draft_attrs(cluster_sources, rumour?)
-    else
-      {:ok,
-       %{
-         headline: primary.title,
-         summary: summary_fallback,
-         body: summary_fallback
-       }, zero_cost_attrs()}
+    cond do
+      relevant_sources == [] and has_full_content_or_summary?(cluster_sources) ->
+        {:error, :no_relevant_sources}
+
+      relevant_sources == [] ->
+        {:error, :source_content_not_ready}
+
+      llm_draft_enabled?() ->
+        llm_draft_attrs(cluster_sources, rumour?)
+
+      true ->
+        {:ok,
+         %{
+           triage_action: nil,
+           target_article_id: nil,
+           headline: primary.title,
+           summary: summary_fallback,
+           body_html: simple_html_from_text(summary_fallback)
+         }, zero_cost_attrs()}
     end
   end
 
@@ -579,13 +835,20 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         end
 
       relevant_sources ->
-        relevant_sources
+        context = editorial_context(cluster_sources, relevant_sources)
+        source_headlines = source_headlines_for_guardrails(cluster_sources)
+
+        context
         |> llm_prompt(rumour?)
-        |> run_llm_draft(runtime_setting(:llm_config, LLMClient.llm_config()) |> Enum.into([]))
+        |> run_llm_draft(
+          runtime_setting(:llm_config, LLMClient.llm_config()) |> Enum.into([]),
+          source_headlines,
+          context
+        )
     end
   end
 
-  defp run_llm_draft(prompt, llm_config) do
+  defp run_llm_draft(prompt, llm_config, source_headlines, context) do
     # Run LLM draft generation in a supervised task so we can fail fast and retry quickly.
     case run_with_timeout(fn ->
            LLMClient.generate(prompt,
@@ -593,7 +856,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
              llm_config: llm_config
            )
          end) do
-      {:ok, %{text: text}} -> parse_and_record_draft(prompt, text)
+      {:ok, %{text: text}} -> parse_and_record_draft(prompt, text, source_headlines, context)
       {:error, reason} -> {:error, reason}
       :timeout -> {:error, :timeout}
     end
@@ -608,45 +871,167 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end
   end
 
-  defp parse_and_record_draft(prompt, text) do
-    case parse_llm_draft(text) do
+  defp parse_and_record_draft(prompt, text, source_headlines, context) do
+    case parse_structured_editorial_response(text) do
       {:ok, attrs} ->
-        llm_cost_attrs = record_llm_cost(prompt, text)
-        {:ok, attrs, llm_cost_attrs}
+        case validate_draft_quality(attrs, source_headlines) do
+          :ok ->
+            final_attrs = reconcile_similarity_action(attrs, context)
+            llm_cost_attrs = record_llm_cost(prompt, text)
+            {:ok, final_attrs, llm_cost_attrs}
+
+          _ ->
+            {:error, :invalid_llm_draft_response}
+        end
 
       _ ->
         {:error, :invalid_llm_draft_response}
     end
   end
 
-  defp parse_llm_draft(text) when is_binary(text) do
+  defp llm_prompt(context, rumour?) do
+    context_json = Jason.encode!(context)
+
+    """
+    You are the Leythers editorial orchestrator. Use the provided JSON context to do two jobs together:
+    1) Decide whether to create a new article or update an existing published article.
+    2) Produce the final output package for publishing.
+
+    Decision rules:
+    - Similarity and update-vs-new must be decided BEFORE writing output.
+    - Use all context sections: incoming_sources, similar_raw_sources, similar_published_articles.
+    - Assume readers already know Leigh Leopards; do not repeatedly explain they are a rugby league team.
+    - Prefer updating an existing published article when the incoming story is the same evolving topic.
+    - If any similar_published_articles item overlaps heavily in facts, entities, or match context, choose "update" and set target_article_id.
+    - Create a new article when the incoming story is materially different.
+    - Use only facts contained in the provided context.
+    - #{if rumour?, do: "Treat this as rumour-sensitive and mark uncertainty carefully.", else: "Write with factual confidence where supported by context."}
+
+    Output requirements:
+    - Return exactly one JSON object.
+    - headline must be plain text and in Leythers voice.
+    - headline must NOT be a rewrite/copy of any source headline and must NOT include source/publisher attribution.
+    - summary must be plain text.
+    - article_html must be valid HTML (use semantic tags like <p>, optional <h2>, <ul>, <li>). No markdown.
+    - article_html must contain at least 4 informative paragraphs with concrete details from context; avoid filler lines.
+    - article_html should synthesize facts from the full_text fields in the context where available, not just source headlines.
+    - target_article_id should be a published article id from similar_published_articles when action is "update".
+
+    JSON schema:
+    {
+      "action": "new" | "update" | "skip",
+      "target_article_id": "<uuid-or-null>",
+      "reasoning": "<brief plain text rationale>",
+      "headline": "<plain text max 100 chars>",
+      "summary": "<plain text max 280 chars>",
+      "article_html": "<html string max 12000 chars>"
+    }
+
+    CONTEXT_JSON:
+    #{context_json}
+    """
+  end
+
+  defp parse_structured_editorial_response(text) when is_binary(text) do
+    with {:ok, payload} <- decode_structured_payload(text),
+         {:ok, action} <- parse_editorial_action(payload),
+         {:ok, attrs} <- extract_editorial_attrs(payload, action) do
+      {:ok, attrs}
+    else
+      _ ->
+        parse_legacy_llm_draft(text)
+    end
+  end
+
+  defp parse_structured_editorial_response(_text), do: :error
+
+  defp decode_structured_payload(text) when is_binary(text) do
+    json_candidate =
+      text
+      |> String.trim()
+      |> strip_code_fence()
+      |> extract_json_block()
+
+    case Jason.decode(json_candidate) do
+      {:ok, %{} = payload} -> {:ok, payload}
+      _ -> :error
+    end
+  end
+
+  defp parse_editorial_action(payload) do
+    action = payload["action"] |> sanitize_plain_text_strict() |> String.downcase()
+
+    case action do
+      "new" -> {:ok, :new}
+      "update" -> {:ok, :update}
+      "skip" -> {:ok, :skip}
+      _ -> :error
+    end
+  end
+
+  defp extract_editorial_attrs(_payload, :skip) do
+    {:ok,
+     %{
+       triage_action: :skip,
+       target_article_id: nil,
+       headline: "",
+       summary: "",
+       body_html: ""
+     }}
+  end
+
+  defp extract_editorial_attrs(payload, action) when action in [:new, :update] do
+    headline = payload["headline"] |> sanitize_plain_text_strict() |> String.slice(0, 100)
+    summary = payload["summary"] |> sanitize_plain_text_strict() |> String.slice(0, 280)
+    body_html = payload["article_html"] |> sanitize_html_strict() |> String.slice(0, 12_000)
+
+    target_article_id =
+      payload["target_article_id"]
+      |> sanitize_plain_text_strict()
+      |> normalize_target_article_id()
+
+    if blank?(headline) or blank?(summary) or blank?(body_html) do
+      :error
+    else
+      {:ok,
+       %{
+         triage_action: action,
+         target_article_id: target_article_id,
+         headline: headline,
+         summary: summary,
+         body_html: body_html
+       }}
+    end
+  end
+
+  defp parse_legacy_llm_draft(text) when is_binary(text) do
     lines =
       text
       |> String.split("\n")
       |> Enum.map(&String.trim/1)
       |> Enum.reject(&(&1 == ""))
 
-    {headline, summary, body} = extract_draft_parts(lines)
+    {headline, summary, body} = extract_legacy_draft_parts(lines)
 
     sanitized_headline = sanitize_plain_text_strict(headline)
     sanitized_summary = sanitize_plain_text_strict(summary)
-    sanitized_body = sanitize_plain_text_strict(body)
+    sanitized_body_html = body |> sanitize_plain_text_strict() |> simple_html_from_text()
 
-    if blank?(sanitized_headline) or blank?(sanitized_summary) or blank?(sanitized_body) do
+    if blank?(sanitized_headline) or blank?(sanitized_summary) do
       :error
     else
       {:ok,
        %{
+         triage_action: :new,
+         target_article_id: nil,
          headline: String.slice(sanitized_headline, 0, 100),
          summary: String.slice(sanitized_summary, 0, 280),
-         body: String.slice(sanitized_body, 0, 12_000)
+         body_html: String.slice(sanitized_body_html, 0, 12_000)
        }}
     end
   end
 
-  defp parse_llm_draft(_), do: :error
-
-  defp extract_draft_parts(lines) do
+  defp extract_legacy_draft_parts(lines) do
     headline_line = Enum.find(lines, &String.starts_with?(String.upcase(&1), "HEADLINE:"))
     summary_line = Enum.find(lines, &String.starts_with?(String.upcase(&1), "SUMMARY:"))
     body_index = Enum.find_index(lines, &String.starts_with?(String.upcase(&1), "BODY:"))
@@ -682,28 +1067,26 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end
   end
 
-  defp llm_prompt(cluster_sources, rumour?) do
-    """
-    Write a Leythers-style rugby article in three parts using these source notes.
+  defp strip_code_fence(text) do
+    text
+    |> String.replace_prefix("```json", "")
+    |> String.replace_prefix("```", "")
+    |> String.replace_suffix("```", "")
+    |> String.trim()
+  end
 
-    Voice guidance:
-    - Fan-journalist tone: colloquial Leigh perspective, light humour, terrace vernacular
-    - Be factual and grounded in provided notes only
-    - #{if rumour?, do: "Use cautious language for rumours; mark uncertainty clearly", else: "Be direct and confident in factual reporting"}
-    - Headlines lead with Leigh angle, avoid clickbait and major spoilers
-    - Summaries are plain-text teasers that encourage reading the full piece
+  defp extract_json_block(text) do
+    case Regex.run(~r/\{[\s\S]*\}/, text) do
+      [json] -> json
+      _ -> text
+    end
+  end
 
-    Return exactly this format:
-    HEADLINE: <compelling Leigh-focused headline, max 100 chars>
-    SUMMARY: <plain-text teaser, max 280 chars, no HTML or markdown>
-    BODY:
-    <full article in 3-5 paragraphs, markdown-safe, with Leythers voice>
+  defp normalize_target_article_id(""), do: nil
+  defp normalize_target_article_id("none"), do: nil
 
-    Rumour: #{rumour?}
-
-    Source notes:
-    #{llm_source_notes(cluster_sources)}
-    """
+  defp normalize_target_article_id(id) do
+    if Regex.match?(~r/^[0-9a-fA-F-]{36}$/, id), do: id, else: nil
   end
 
   defp record_llm_cost(prompt, completion) do
@@ -740,32 +1123,123 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   defp estimate_tokens(_), do: 1
 
-  defp llm_source_notes(cluster_sources) do
-    cluster_sources
-    |> Enum.with_index(1)
-    |> Enum.map_join("\n\n", fn {source, idx} ->
-      full_text =
-        source.content
-        |> sanitize_plain_text_strict()
+  defp editorial_context(cluster_sources, relevant_sources) do
+    %{
+      incoming_sources: format_sources_for_context(relevant_sources),
+      similar_raw_sources:
+        find_similar_raw_sources(cluster_sources) |> format_sources_for_context(),
+      similar_published_articles:
+        find_similar_published_articles(cluster_sources)
+        |> Enum.map(&format_article_entry_for_context/1)
+    }
+  end
 
-      title =
-        source.title
-        |> sanitize_plain_text_strict()
-        |> fallback_text("(untitled source)")
-
-      provider = fallback_text(source.origin_provider, "unknown_provider")
-      source_url = fallback_text(source.url, "(no_url)")
-
-      """
-      SOURCE #{idx}:
-      PROVIDER: #{provider}
-      URL: #{source_url}
-      HEADLINE: #{title}
-      FULL_TEXT:
-      #{full_text}
-      """
+  defp format_sources_for_context(sources) do
+    Enum.map(sources, fn source ->
+      %{
+        id: source.id,
+        origin_provider: fallback_text(source.origin_provider, "unknown_provider"),
+        url: fallback_text(source.url, "(no_url)"),
+        headline:
+          source.title |> sanitize_plain_text_strict() |> fallback_text("(untitled source)"),
+        full_text: source.content |> sanitize_plain_text_strict() |> truncate_for_prompt(3_500),
+        summary:
+          source.body_summary
+          |> sanitize_plain_text_strict()
+          |> fallback_text("no summary available"),
+        external_published_at: format_dt(source.external_published_at)
+      }
     end)
-    |> then(&"Consider only these relevant source articles:\n\n#{&1}")
+  end
+
+  defp find_similar_raw_sources(cluster_sources) do
+    current_ids = Enum.map(cluster_sources, & &1.id)
+
+    reference_text =
+      cluster_sources
+      |> Enum.map_join("\n", fn source ->
+        [source.title, source.content, source.body_summary]
+        |> Enum.filter(&is_binary/1)
+        |> Enum.join(" ")
+      end)
+      |> sanitize_plain_text_strict()
+
+    RawSource
+    |> where([source], source.id not in ^current_ids)
+    |> where([source], source.status in ["pending", "processed"])
+    |> order_by([source], desc: source.external_published_at, desc: source.inserted_at)
+    |> limit(80)
+    |> Repo.all()
+    |> Enum.filter(fn source ->
+      StorySimilarity.similar?(source.title || "", List.first(cluster_sources).title || "", 0.35) or
+        StorySimilarity.score(reference_text, similarity_text_for_source(source)) >= 0.3
+    end)
+    |> Enum.take(8)
+  end
+
+  defp similarity_text_for_source(source) do
+    [source.title, source.content, source.body_summary]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join(" ")
+    |> sanitize_plain_text_strict()
+  end
+
+  defp find_similar_published_articles(cluster_sources) do
+    reference_headline = List.first(cluster_sources).title || ""
+    reference_text = cluster_sources |> Enum.map_join("\n", &similarity_text_for_source/1)
+
+    entries = Content.list_recent_articles_with_sources(30)
+
+    similar_entries =
+      Enum.filter(entries, fn entry ->
+        article = entry.article
+
+        StorySimilarity.similar?(article.title || "", reference_headline, 0.2) or
+          StorySimilarity.score(article_similarity_text(article), reference_text) >= 0.2 or
+          similar_source_title_overlap?(entry.sources, cluster_sources)
+      end)
+
+    if similar_entries == [] do
+      entries |> Enum.take(10)
+    else
+      similar_entries |> Enum.take(10)
+    end
+  end
+
+  defp article_similarity_text(article) do
+    [article.title, article.summary, article.body]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join(" ")
+    |> sanitize_plain_text_strict()
+  end
+
+  defp similar_source_title_overlap?(article_sources, cluster_sources) do
+    incoming_titles = Enum.map(cluster_sources, &(&1.title || ""))
+
+    Enum.any?(article_sources, fn source ->
+      Enum.any?(incoming_titles, fn incoming_title ->
+        StorySimilarity.similar?(source.title || "", incoming_title, 0.4)
+      end)
+    end)
+  end
+
+  defp format_article_entry_for_context(entry) do
+    %{
+      article_id: entry.article.id,
+      author_type: entry.article.author_type,
+      headline: entry.article.title |> sanitize_plain_text_strict(),
+      summary: entry.article.summary |> sanitize_plain_text_strict(),
+      article_html: sanitize_html_strict(entry.article.body),
+      source_links:
+        Enum.map(entry.sources, fn source ->
+          %{
+            id: source.id,
+            title: source.title |> sanitize_plain_text_strict(),
+            url: source.url,
+            origin_provider: source.origin_provider
+          }
+        end)
+    }
   end
 
   defp deterministic_article_summary(cluster_sources) do
@@ -817,6 +1291,197 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   defp sanitize_plain_text_strict(_), do: ""
 
+  defp simple_html_from_text(text) when is_binary(text) do
+    text
+    |> String.trim()
+    |> Phoenix.HTML.html_escape()
+    |> Phoenix.HTML.safe_to_string()
+    |> String.split("\n", trim: true)
+    |> Enum.map_join("", fn line -> "<p>#{line}</p>" end)
+  end
+
+  defp simple_html_from_text(_text), do: ""
+
+  defp sanitize_html_strict(html) when is_binary(html) do
+    cleaned =
+      html
+      |> String.replace(~r/<script[\s\S]*?<\/script>/i, "")
+      |> String.replace(~r/\son[a-z]+=\"[^\"]*\"/i, "")
+      |> String.replace(~r/\son[a-z]+='[^']*'/i, "")
+      |> String.replace(~r/javascript:/i, "")
+      |> String.trim()
+
+    if Regex.match?(~r/<[^>]+>/, cleaned) do
+      cleaned
+    else
+      cleaned |> sanitize_plain_text_strict() |> simple_html_from_text()
+    end
+  end
+
+  defp sanitize_html_strict(_html), do: ""
+
+  defp source_headlines_for_guardrails(cluster_sources) do
+    cluster_sources
+    |> Enum.map(&sanitize_plain_text_strict(&1.title))
+    |> Enum.reject(&blank?/1)
+  end
+
+  defp validate_draft_quality(attrs, source_headlines) when is_map(attrs) do
+    body_html = Map.get(attrs, :body_html, "")
+    headline = Map.get(attrs, :headline, "")
+    summary = Map.get(attrs, :summary, "")
+
+    body_text_len =
+      body_html
+      |> strip_html()
+      |> sanitize_plain_text_strict()
+      |> String.length()
+
+    paragraph_count =
+      Regex.scan(~r/<p\b[^>]*>/i, body_html)
+      |> length()
+
+    cond do
+      body_text_len < @min_article_body_chars ->
+        {:error, :body_too_short}
+
+      paragraph_count < @min_article_body_paragraphs ->
+        {:error, :body_not_detailed_enough}
+
+      copied_source_headline?(headline, source_headlines) ->
+        {:error, :headline_too_similar_to_source}
+
+      generic_headline?(headline) ->
+        {:error, :headline_too_generic}
+
+      generic_summary?(summary) ->
+        {:error, :summary_too_generic}
+
+      generic_body?(body_html) ->
+        {:error, :body_too_generic}
+
+      repeated_generic_phrase?(body_html) ->
+        {:error, :generic_phrasing_repeated}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp copied_source_headline?(headline, source_headlines) do
+    normalized_headline = sanitize_plain_text_strict(headline)
+
+    normalized_headline != "" and
+      Enum.any?(source_headlines, fn source_headline ->
+        StorySimilarity.similar?(
+          normalized_headline,
+          source_headline,
+          @headline_source_similarity_threshold
+        )
+      end)
+  end
+
+  defp generic_headline?(headline) do
+    normalized =
+      headline
+      |> sanitize_plain_text_strict()
+      |> String.downcase()
+
+    String.starts_with?(normalized, "leigh leopards") and
+      Enum.any?(@generic_headline_patterns, &String.contains?(normalized, &1))
+  end
+
+  defp generic_summary?(summary) do
+    normalized =
+      summary
+      |> sanitize_plain_text_strict()
+      |> String.downcase()
+
+    Enum.any?(@generic_summary_patterns, &String.contains?(normalized, &1))
+  end
+
+  defp generic_body?(body_html) do
+    normalized =
+      body_html
+      |> strip_html()
+      |> sanitize_plain_text_strict()
+      |> String.downcase()
+
+    Enum.any?(@generic_body_patterns, &String.contains?(normalized, &1))
+  end
+
+  defp repeated_generic_phrase?(body_html) do
+    body_text =
+      body_html
+      |> strip_html()
+      |> sanitize_plain_text_strict()
+      |> String.downcase()
+
+    phrase_count =
+      Regex.scan(~r/\brugby league team\b/, body_text)
+      |> length()
+
+    phrase_count > 1
+  end
+
+  defp reconcile_similarity_action(attrs, %{similar_published_articles: entries})
+       when is_map(attrs) and is_list(entries) do
+    normalized_action = Map.get(attrs, :triage_action)
+
+    if normalized_action in [:new, :update] do
+      case best_similar_published_match(attrs, entries) do
+        %{article_id: article_id, text_score: text_score, title_score: title_score}
+        when is_binary(article_id) and
+               (text_score >= @article_similarity_update_threshold or
+                  title_score >= @headline_recent_similarity_threshold) ->
+          attrs
+          |> Map.put(:triage_action, :update)
+          |> Map.put(:target_article_id, article_id)
+
+        _ ->
+          attrs
+      end
+    else
+      attrs
+    end
+  end
+
+  defp reconcile_similarity_action(attrs, _context), do: attrs
+
+  defp best_similar_published_match(attrs, entries) do
+    candidate_text =
+      [
+        Map.get(attrs, :headline, ""),
+        Map.get(attrs, :summary, ""),
+        Map.get(attrs, :body_html, "")
+      ]
+      |> Enum.join(" ")
+      |> sanitize_plain_text_strict()
+
+    entries
+    |> Enum.map(fn entry ->
+      article_text =
+        [
+          Map.get(entry, :headline, ""),
+          Map.get(entry, :summary, ""),
+          Map.get(entry, :article_html, "")
+        ]
+        |> Enum.join(" ")
+        |> sanitize_plain_text_strict()
+
+      %{
+        article_id: Map.get(entry, :article_id),
+        text_score: StorySimilarity.score(candidate_text, article_text),
+        title_score:
+          StorySimilarity.score(
+            sanitize_plain_text_strict(Map.get(attrs, :headline, "")),
+            sanitize_plain_text_strict(Map.get(entry, :headline, ""))
+          )
+      }
+    end)
+    |> Enum.max_by(fn result -> max(result.text_score, result.title_score) end, fn -> nil end)
+  end
+
   defp relevant_sources_for_draft(cluster_sources) do
     cluster_sources
     |> Enum.filter(fn source ->
@@ -827,12 +1492,34 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end)
   end
 
+  defp relevant_sources_for_consideration(cluster_sources) do
+    Enum.filter(cluster_sources, &relevant_to_leigh?/1)
+  end
+
   defp has_full_content?(cluster_sources) do
     Enum.any?(cluster_sources, fn source ->
       source.content
       |> sanitize_plain_text_strict()
       |> blank?()
       |> Kernel.not()
+    end)
+  end
+
+  defp has_full_content_or_summary?(cluster_sources) do
+    Enum.any?(cluster_sources, fn source ->
+      content_present? =
+        source.content
+        |> sanitize_plain_text_strict()
+        |> blank?()
+        |> Kernel.not()
+
+      summary_present? =
+        source.body_summary
+        |> sanitize_plain_text_strict()
+        |> blank?()
+        |> Kernel.not()
+
+      content_present? or summary_present?
     end)
   end
 
@@ -872,6 +1559,73 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp significance_score(cluster_sources) do
+    if llm_significance_enabled?() do
+      case llm_significance_score(cluster_sources) do
+        {:ok, score} -> score
+        :error -> deterministic_significance_score(cluster_sources)
+      end
+    else
+      deterministic_significance_score(cluster_sources)
+    end
+  end
+
+  defp llm_significance_score(cluster_sources) do
+    prompt = significance_prompt(cluster_sources)
+    llm_config = runtime_setting(:llm_config, LLMClient.llm_config()) |> Enum.into([])
+
+    case run_with_timeout(fn ->
+           LLMClient.generate(prompt,
+             timeout_ms: llm_significance_timeout_ms(),
+             llm_config: llm_config
+           )
+         end) do
+      {:ok, {:ok, %{text: text}}} -> parse_numeric_score(text)
+      _ -> :error
+    end
+  end
+
+  defp significance_prompt(cluster_sources) do
+    notes =
+      cluster_sources
+      |> Enum.with_index(1)
+      |> Enum.map_join("\n", fn {source, idx} ->
+        title = source.title |> sanitize_plain_text_strict() |> fallback_text("(untitled)")
+        provider = fallback_text(source.origin_provider, "unknown_provider")
+        "#{idx}. [#{provider}] #{title}"
+      end)
+
+    """
+    Score editorial significance for Leigh Leopards supporters from 0 to 100.
+    Return only one integer.
+
+    Source notes:
+    #{notes}
+    """
+  end
+
+  defp parse_numeric_score(text) when is_binary(text) do
+    trimmed = String.trim(text)
+
+    cond do
+      Regex.match?(~r/^(100|[1-9]?\d)$/, trimmed) ->
+        {:ok, String.to_integer(trimmed)}
+
+      match = Regex.run(~r/\bscore\b[^0-9]*(100|[1-9]?\d)\b/i, text) ->
+        [_, value] = match
+        {:ok, String.to_integer(value)}
+
+      match = Regex.run(~r/\b(100|[1-9]?\d)\s*\/\s*100\b/, text) ->
+        [_, value] = match
+        {:ok, String.to_integer(value)}
+
+      true ->
+        :error
+    end
+  end
+
+  defp parse_numeric_score(_), do: :error
+
+  defp deterministic_significance_score(cluster_sources) do
     source_count_score = min(length(cluster_sources) * 25, 60)
     provider_diversity_score = min(distinct_provider_count(cluster_sources) * 15, 30)
     rumour_score = if rumour_cluster?(cluster_sources), do: 10, else: 0
@@ -928,6 +1682,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     runtime_setting(:llm_draft_timeout_ms, @default_llm_draft_timeout_ms)
   end
 
+  defp llm_significance_enabled? do
+    runtime_setting(:llm_significance_enabled, true)
+  end
+
+  defp llm_significance_timeout_ms do
+    runtime_setting(:llm_significance_timeout_ms, @default_llm_significance_timeout_ms)
+  end
+
   defp dispatch_delay_ms do
     max_delay_ms =
       runtime_setting(:source_editorial_dispatch_delay_max_ms, @default_dispatch_delay_max_ms)
@@ -956,6 +1718,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     runtime_setting(:source_editorial_retry_persist_threshold, @default_retry_persist_threshold)
   end
 
+  defp full_rerank_source_limit do
+    runtime_setting(:full_rerank_source_limit, @default_full_rerank_source_limit)
+  end
+
+  defp full_rerank_homepage_size do
+    runtime_setting(:full_rerank_homepage_size, @default_full_rerank_homepage_size)
+  end
+
   defp runtime_settings do
     %{
       auto_generation_enabled: read_generation_setting(:auto_generation_enabled, true),
@@ -977,6 +1747,12 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         read_generation_setting(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms),
       llm_draft_timeout_ms:
         read_generation_setting(:llm_draft_timeout_ms, @default_llm_draft_timeout_ms),
+      llm_significance_enabled: read_generation_setting(:llm_significance_enabled, true),
+      llm_significance_timeout_ms:
+        read_generation_setting(
+          :llm_significance_timeout_ms,
+          @default_llm_significance_timeout_ms
+        ),
       source_editorial_dispatch_delay_ms:
         read_generation_setting(:source_editorial_dispatch_delay_ms, @default_dispatch_delay_ms),
       source_editorial_dispatch_delay_max_ms:
@@ -993,6 +1769,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
           :source_editorial_retry_persist_threshold,
           @default_retry_persist_threshold
         ),
+      full_rerank_source_limit:
+        read_generation_setting(:full_rerank_source_limit, @default_full_rerank_source_limit),
+      full_rerank_homepage_size:
+        read_generation_setting(:full_rerank_homepage_size, @default_full_rerank_homepage_size),
       llm_config: LLMClient.llm_config() |> Map.new()
     }
   end
@@ -1156,4 +1936,24 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp blank?(value), do: value in [nil, ""]
+
+  defp emit_decision_telemetry(started_at, metadata) when is_map(metadata) do
+    safe_metadata =
+      metadata
+      |> Map.put_new(:result, :ok)
+      |> Map.put_new(:decision_action, "unknown")
+      |> Map.put_new(:triage_action, "unknown")
+      |> Map.put_new(:source_count, 0)
+      |> Map.put_new(:prompt_version, prompt_version())
+      |> Map.put_new(:llm_input_tokens, 0)
+      |> Map.put_new(:llm_output_tokens, 0)
+
+    :telemetry.execute(
+      [:leythers_com, :intelligence, :source_editorial, :decision, :stop],
+      %{duration: System.monotonic_time() - started_at, count: 1},
+      safe_metadata
+    )
+
+    :ok
+  end
 end

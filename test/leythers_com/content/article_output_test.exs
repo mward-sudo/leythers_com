@@ -89,8 +89,8 @@ defmodule LeythersCom.Content.ArticleOutputTest do
   end
 
   describe "validate_body/1" do
-    test "accepts non-empty body" do
-      assert [] == ArticleOutput.validate_body("This is the full article content.")
+    test "accepts formatted html body" do
+      assert [] == ArticleOutput.validate_body("<p>This is the full article content.</p>")
     end
 
     test "rejects empty body" do
@@ -110,7 +110,7 @@ defmodule LeythersCom.Content.ArticleOutputTest do
         ArticleOutput.new(
           "Leigh Prepare for Challenge Ahead",
           "Leigh's squad is ready for the upcoming fixture.",
-          "Full article body with multiple paragraphs discussing the team's preparation and strategy."
+          "<p>Full article body with multiple paragraphs discussing the team's preparation and strategy.</p>"
         )
 
       assert {:ok, ^output} = ArticleOutput.validate(output)
@@ -121,7 +121,7 @@ defmodule LeythersCom.Content.ArticleOutputTest do
         ArticleOutput.new(
           "Manchester Derby Drama",
           "Valid summary here.",
-          "Valid body here."
+          "<p>Valid body here.</p>"
         )
 
       {:error, issues} = ArticleOutput.validate(output)
@@ -133,7 +133,7 @@ defmodule LeythersCom.Content.ArticleOutputTest do
         ArticleOutput.new(
           "Leigh Leopards Update",
           "Check <b>this link</b> for more info.",
-          "Valid body here."
+          "<p>Valid body here.</p>"
         )
 
       {:error, issues} = ArticleOutput.validate(output)

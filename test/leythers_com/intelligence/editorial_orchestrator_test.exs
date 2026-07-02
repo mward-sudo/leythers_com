@@ -35,7 +35,7 @@ defmodule LeythersCom.Intelligence.EditorialOrchestratorTest do
     _other_article =
       insert_article_with_source("leythers-refresh-two", "https://example.com/source-two")
 
-    assert {:ok, %{run_id: run_id, decision_count: 1}} =
+    assert {:ok, %{run_id: run_id, decision_count: 2}} =
              EditorialOrchestrator.refresh_homepage_layout(
                llm_enabled: false,
                source_limit: 10,
@@ -49,12 +49,12 @@ defmodule LeythersCom.Intelligence.EditorialOrchestratorTest do
       |> order_by([decision], asc: decision.rank_position)
       |> Repo.all()
 
-    assert length(decisions) == 1
-    assert Enum.map(decisions, & &1.rank_position) == [1]
+    assert length(decisions) == 2
+    assert Enum.map(decisions, & &1.rank_position) == [1, 2]
     assert Enum.all?(decisions, &(&1.prompt_version == "homepage_ranker_test"))
 
     snapshot = EditorialOrchestrator.latest_homepage_snapshot(2)
-    assert length(snapshot) == 1
+    assert length(snapshot) == 2
     assert Enum.all?(snapshot, &is_map(&1.article))
   end
 

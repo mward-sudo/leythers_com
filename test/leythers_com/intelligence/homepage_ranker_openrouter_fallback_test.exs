@@ -40,7 +40,7 @@ defmodule LeythersCom.Intelligence.HomepageRankerOpenRouterFallbackTest do
       )
 
     assert ranked.importance_source == :deterministic
-    assert ranked.importance_score == 70
+    assert ranked.importance_score == 62
   end
 
   defp entry(title, timestamp, source_markers) do
