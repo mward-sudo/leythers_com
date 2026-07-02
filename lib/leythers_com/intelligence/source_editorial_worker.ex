@@ -31,11 +31,15 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_retry_persist_threshold 3
 
   def enqueue(attrs \\ %{}) when is_map(attrs) do
-    attrs
-    |> normalize_args()
+    # Always use a canonical dispatch task key so that cluster tasks (which share
+    # the same worker but carry different args) do not block new dispatch jobs
+    # from being inserted via the uniqueness constraint.
+    _ = attrs
+
+    %{"task" => "dispatch"}
     |> new(
       unique: [
-        fields: [:worker],
+        fields: [:worker, :args],
         period: enqueue_unique_seconds(),
         # Keep scheduled dispatch continuations from blocking immediate catch-up dispatches.
         states: [:available, :executing]
@@ -163,12 +167,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp enqueue_dispatch_continuation(source_limit, max_batches_left) do
+    delay_seconds = div(dispatch_delay_ms(), 1_000) |> max(1)
+
     %{
       "source_limit" => source_limit,
       "max_batches" => max_batches_left,
       "drain_backlog" => true
     }
-    |> new(schedule_in: dispatch_delay_ms())
+    |> new(schedule_in: delay_seconds)
     |> Oban.insert()
 
     :ok
@@ -740,11 +746,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   defp zero_cost_attrs do
     %{input_tokens: 0, output_tokens: 0, estimated_cost_gbp: Decimal.new("0")}
-  end
-
-  defp normalize_args(args) do
-    args
-    |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
   end
 
   defp source_snapshot(cluster_sources) do

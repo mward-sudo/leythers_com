@@ -9,10 +9,13 @@ defmodule LeythersCom.Ingestion.FetchRawSourceWorker do
   alias LeythersCom.Ingestion.HttpClient.Req
   alias LeythersCom.Ingestion.Providers.Basic
   alias LeythersCom.Ingestion.Providers.Html
+  alias LeythersCom.Intelligence.SourceEditorialWorker
 
   @impl Oban.Worker
   def perform(%Oban.Job{args: attrs}) do
-    fetch_and_upsert(attrs)
+    result = fetch_and_upsert(attrs)
+    if result == :ok, do: _ = SourceEditorialWorker.enqueue()
+    result
   end
 
   def fetch_and_upsert(attrs, http_client \\ Req)
