@@ -15,6 +15,7 @@ defmodule LeythersCom.Ingestion do
   alias LeythersCom.Ingestion.Providers.Basic
   alias LeythersCom.Ingestion.Providers.Rss
   alias LeythersCom.Ingestion.RawSource
+  alias LeythersCom.Ingestion.RawSourceStatusMachine
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.SourceEditorialWorker
   alias LeythersCom.Repo
@@ -112,8 +113,13 @@ defmodule LeythersCom.Ingestion do
       RawSource
       |> where([source], source.status in ["processed", "ignored"])
       |> maybe_filter_regeneration_scope(scope, now)
-      |> Repo.update_all(set: [status: "pending"])
-      |> elem(0)
+      |> Repo.all()
+      |> Enum.reduce(0, fn source, acc ->
+        case RawSourceStatusMachine.reset_to_pending(source) do
+          {:ok, _updated_source} -> acc + 1
+          _other -> acc
+        end
+      end)
 
     {:ok, maybe_enqueue_source_editorial_worker(requeued_sources, scope, enqueue_worker?)}
   end

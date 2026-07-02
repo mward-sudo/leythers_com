@@ -13,6 +13,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   alias LeythersCom.Content
   alias LeythersCom.Ingestion.RawSource
+  alias LeythersCom.Ingestion.RawSourceStatusMachine
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.LLMClient
@@ -411,17 +412,27 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp mark_sources_processed([]), do: 0
 
   defp mark_sources_processed(source_ids) do
-    from(source in RawSource, where: source.id in ^source_ids)
-    |> Repo.update_all(set: [status: "processed"])
-    |> elem(0)
+    source_ids
+    |> fetch_sources_by_ids()
+    |> Enum.reduce(0, fn source, acc ->
+      case RawSourceStatusMachine.mark_processed(source) do
+        {:ok, _updated_source} -> acc + 1
+        _other -> acc
+      end
+    end)
   end
 
   defp mark_sources_ignored([]), do: 0
 
   defp mark_sources_ignored(source_ids) do
-    from(source in RawSource, where: source.id in ^source_ids)
-    |> Repo.update_all(set: [status: "ignored"])
-    |> elem(0)
+    source_ids
+    |> fetch_sources_by_ids()
+    |> Enum.reduce(0, fn source, acc ->
+      case RawSourceStatusMachine.mark_ignored(source) do
+        {:ok, _updated_source} -> acc + 1
+        _other -> acc
+      end
+    end)
   end
 
   defp handle_irrelevant_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot) do

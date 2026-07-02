@@ -2,6 +2,30 @@
 
 ## Pipeline A: Ingestion -> Processing -> Publishing
 
+### Formal Source Lifecycle
+
+Raw sources move through one explicit lifecycle state machine and one content-enrichment after-effect:
+
+1. `pending` is the only active intake state.
+2. `processed` means the source has been promoted into the editorial pipeline.
+3. `ignored` means the source was examined and deliberately excluded.
+4. Regeneration is a reset transition from `processed` or `ignored` back to `pending`.
+5. Full article content is populated independently of `status`; content fetch may complete while the source remains `pending`.
+
+Allowed transitions:
+
+1. `pending -> processed` after editorial publication succeeds.
+2. `pending -> ignored` when content is unavailable, the source is irrelevant, or the editorial draft is invalid.
+3. `processed -> pending` when an operator requests regeneration.
+4. `ignored -> pending` when an operator requests regeneration.
+
+Ownership rules:
+
+1. RSS/HTML fetch workers create or refresh raw source rows.
+2. Content fetch workers populate `raw_sources.content` and link-health fields.
+3. Editorial dispatch owns clustering and article publication decisions.
+4. The regeneration action only re-opens source lifecycle state; it does not publish content.
+
 ### Stage A1: Fetch
 
 1. Quantum schedules provider fetch jobs.
@@ -40,6 +64,13 @@ Failure policy:
 3. Update `raw_sources.status` to `processed`.
 4. Persist `job_effect_events` records containing source input snapshots, decision action, and
    resulting content changes.
+
+### Stage A5: Recovery and Replay
+
+1. On boot, cancel stale editorial jobs and enqueue a single dispatch job when backlog recovery is needed.
+2. Dispatch jobs may enqueue one follow-up dispatch job while backlog remains, but the job args must stay canonical so uniqueness prevents duplicate continuations.
+3. Cluster jobs only act on sources still in `pending`.
+4. Jobs that find their source rows no longer pending must complete without mutating them.
 
 ## Pipeline B: Manual Fast-Track
 
