@@ -18,8 +18,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Intelligence.LLMClient
   alias LeythersCom.Repo
 
-  @default_batch_size 20
-  @default_max_batches_per_run 20
+  @default_batch_size 100
+  @default_max_batches_per_run 100
   @default_significance_threshold 70
   @default_prompt_version "source_editorial_v1"
   @default_enqueue_unique_seconds 3_600
@@ -124,11 +124,24 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     pending_sources
     |> Enum.map(&[&1])
     |> Enum.reduce_while(:ok, fn cluster, :ok ->
-      case enqueue_cluster_task(cluster, run_id) do
+      case build_cluster_job(cluster, run_id) |> Oban.insert() do
         {:ok, _job} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  defp build_cluster_job(cluster, run_id) do
+    source_ids = Enum.map(cluster, & &1.id)
+
+    %{"task" => "cluster", "process_run_id" => run_id, "source_ids" => source_ids}
+    |> new(
+      unique: [
+        fields: [:worker, :args],
+        period: enqueue_unique_seconds(),
+        states: [:available, :scheduled, :executing, :retryable]
+      ]
+    )
   end
 
   defp fetch_pending_sources(source_limit) do
@@ -178,29 +191,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> Oban.insert()
 
     :ok
-  end
-
-  defp enqueue_cluster_task(cluster_sources, run_id) do
-    source_ids =
-      cluster_sources
-      |> Enum.map(& &1.id)
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    %{
-      "task" => "cluster",
-      "process_run_id" => run_id,
-      "source_ids" => source_ids
-    }
-    |> new(
-      unique: [
-        fields: [:worker, :args],
-        period: enqueue_unique_seconds(),
-        states: [:available, :scheduled, :executing, :retryable]
-      ]
-    )
-    |> Oban.insert()
   end
 
   defp process_cluster_task(%Oban.Job{args: args} = job) do

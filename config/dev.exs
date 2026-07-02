@@ -35,9 +35,9 @@ config :leythers_com, LeythersComWeb.Endpoint,
 config :leythers_com,
   llm_comparison_timeout_ms: 60_000
 
-# In dev, run intelligence jobs one-at-a-time so LLM calls queue naturally.
-# In dev, run ingestion and intelligence one-at-a-time for deterministic processing.
-config :leythers_com, Oban, queues: [ingestion: 1, intelligence: 1]
+# In dev, run ingestion with moderate concurrency and intelligence with higher concurrency
+# to allow multiple LLM requests to process in parallel across workers.
+config :leythers_com, Oban, queues: [ingestion: 2, intelligence: 10]
 
 # Use a gradual circuit cooldown ramp for local Ollama to avoid burst/recover churn.
 config :leythers_com, :llm_guard,
@@ -119,8 +119,8 @@ config :swoosh, :api_client, false
 config :leythers_com, :intelligence_generation,
   llm_grouping_enabled: false,
   grouping_llm_timeout_ms: 30_000,
-  source_batch_size: 8,
-  max_batches_per_run: 8,
+  source_batch_size: 50,
+  max_batches_per_run: 50,
   source_editorial_retry_base_seconds: 1,
   source_editorial_retry_max_seconds: 8,
   source_editorial_retry_persist_threshold: 3
