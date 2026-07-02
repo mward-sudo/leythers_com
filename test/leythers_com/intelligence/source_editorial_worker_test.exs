@@ -15,26 +15,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     @behaviour LeythersCom.Intelligence.LLMClient
 
     @impl true
-    def generate(prompt, _opts) do
-      # Detect if this is a triage prompt - if so, return approval
-      if String.contains?(prompt, "Decide if a new source is relevant") or
-           String.contains?(prompt, "DECISION RULES:") do
-        # Triage response
-        {:ok,
-         %{
-           text:
-             "DECISION: new\nTARGET_ID: none\nREASONING: Source is relevant and contains new information about Leigh.",
-           model: "fake-triage"
-         }}
-      else
-        # Draft response
-        {:ok,
-         %{
-           text:
-             "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
-           model: "fake-draft"
-         }}
-      end
+    def generate(_prompt, _opts) do
+      {:ok,
+       %{
+         text:
+           ~s({"action":"new","target_article_id":null,"reasoning":"Relevant Leigh update.","headline":"Leigh Squad Gearing Up","summary":"Sources report training improvements.","article_html":"<p>Leigh have sharpened their middle rotation this week, with repeated contact blocks and short-yardage drills aimed at improving first-contact wins and quicker ruck speed through the centre channel.</p><p>Coaches have also adjusted edge combinations so the outside backs can exploit broken-field transitions, giving Leigh more shape when they kick early and then chase hard to pin opponents in their own third.</p><p>The net effect is a clearer game model: defend with discipline, build pressure through repeat sets, and turn territory into scoreboard moments rather than forcing low-percentage plays in traffic.</p><p>Supporters should watch the early-set control battle because that phase is likely to decide whether Leigh can build sustained pressure or spend long stretches defending exits.</p>"}),
+         model: "fake-draft"
+       }}
     end
   end
 
@@ -89,12 +76,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     @impl true
     def generate(prompt, _opts) do
-      if String.contains?(prompt, "HEADLINE:") and String.contains?(prompt, "FULL_TEXT:") and
+      if String.contains?(prompt, "CONTEXT_JSON:") and
+           String.contains?(prompt, "incoming_sources") and
+           String.contains?(prompt, "similar_published_articles") and
            String.contains?(prompt, "Leigh source content contract body") do
         {:ok,
          %{
            text:
-             "HEADLINE: Leigh Source Contract Holds\nSUMMARY: Prompt includes required source details.\nBODY:\nBody confirms source headline and full text were provided.",
+             ~s({"action":"new","target_article_id":null,"reasoning":"Prompt includes required source details.","headline":"Leigh Tune Edge Combinations Ahead of Weekend Test","summary":"Prompt includes required source details.","article_html":"<p>Body confirms source headline and full text were provided for the draft context, including match background, selection implications, and the timing pressure around squad decisions. It describes where Leigh have shifted training emphasis, how those adjustments affect set starts and yardage flow, and why the staff are prioritizing cleaner exits to avoid gifting field position.</p><p>The article then develops those points into fan-relevant consequences, explaining where Leigh could gain control in key exchanges and where opponents may target weaknesses in transition. It links that tactical picture to likely momentum swings, especially in the middle third where repeated contact wins and fast rucks can quickly tilt territorial pressure.</p><p>It closes with grounded expectations for supporters, connecting tactical intent to likely game flow rather than repeating provider wording from the source headline. It also sets out realistic checkpoints for performance, including defensive line speed after kicks, edge communication under fatigue, and composure inside the final quarter when decision quality matters most.</p><p>That extra layer of detail demonstrates the draft is synthesizing context and full-text material rather than producing a shallow headline rewrite. The writing reflects a supporter-first editorial voice while still staying factual, specific, and anchored in the source evidence provided to the model.</p>"}),
            model: "prompt-contract"
          }}
       else
@@ -112,7 +101,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       {:ok,
        %{
          text:
-           "SUMMARY: Source summary only\nBODY:\nDraft body without a headline should be rejected.",
+           ~s({"action":"new","target_article_id":null,"summary":"Source summary only","article_html":"<p>Draft body without a headline should be rejected.</p>"}),
          model: "missing-headline"
        }}
     end
@@ -123,31 +112,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     @behaviour LeythersCom.Intelligence.LLMClient
 
     @impl true
-    def generate(prompt, _opts) do
-      cond do
-        # Triage prompt
-        String.contains?(prompt, "Decide if a new source is relevant") or
-            String.contains?(prompt, "DECISION RULES:") ->
-          {:ok,
-           %{
-             text:
-               "DECISION: new\nTARGET_ID: none\nREASONING: Source is relevant and contains new information about Leigh.",
-             model: "fake-triage"
-           }}
-
-        # Draft prompt
-        String.contains?(prompt, "HEADLINE:") or String.contains?(prompt, "Create an article") ->
-          {:ok,
-           %{
-             text:
-               "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
-             model: "fake-draft"
-           }}
-
-        # Clustering/similarity prompt
-        true ->
-          {:ok, %{text: "SAME", model: "fake-clustering"}}
-      end
+    def generate(_prompt, _opts) do
+      {:ok,
+       %{
+         text:
+           ~s({"action":"new","target_article_id":null,"reasoning":"Relevant source update.","headline":"Leigh Squad Gearing Up","summary":"Sources report training improvements.","article_html":"<p>Leigh have sharpened their middle rotation this week, with repeated contact blocks and short-yardage drills aimed at improving first-contact wins and quicker ruck speed through the centre channel.</p><p>Coaches have also adjusted edge combinations so the outside backs can exploit broken-field transitions, giving Leigh more shape when they kick early and then chase hard to pin opponents in their own third.</p><p>The net effect is a clearer game model: defend with discipline, build pressure through repeat sets, and turn territory into scoreboard moments rather than forcing low-percentage plays in traffic.</p><p>Supporters should watch the early-set control battle because that phase is likely to decide whether Leigh can build sustained pressure or spend long stretches defending exits.</p>"}),
+         model: "fake-clustering"
+       }}
     end
   end
 
@@ -167,34 +138,20 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     @impl true
     def generate(prompt, _opts) do
-      # Detect if this is a triage prompt or draft prompt
-      if String.contains?(prompt, "Decide if a new source is relevant") or
-           String.contains?(prompt, "DECISION: ") do
-        # Triage response: decide new vs update based on whether recent articles exist
-        # If prompt shows "RECENT PUBLISHED ARTICLES" with actual content (not "None yet"), suggest update
-        decision =
-          if String.contains?(prompt, "RECENT PUBLISHED ARTICLES") and
-               not String.contains?(prompt, "None yet") do
-            "update"
-          else
-            "new"
-          end
+      {action, target_article_id} =
+        case Regex.run(~r/"article_id":"([0-9a-fA-F-]{36})"/, prompt) do
+          [_, article_id] -> {"update", article_id}
+          _ -> {"new", nil}
+        end
 
-        {:ok,
-         %{
-           text:
-             "DECISION: #{decision}\nTARGET_ID: none\nREASONING: Source is relevant and contains new information about Leigh.",
-           model: "fake-triage"
-         }}
-      else
-        # Draft response
-        {:ok,
-         %{
-           text:
-             "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
-           model: "fake-draft"
-         }}
-      end
+      target_json = if is_binary(target_article_id), do: ~s("#{target_article_id}"), else: "null"
+
+      {:ok,
+       %{
+         text:
+           ~s({"action":"#{action}","target_article_id":#{target_json},"reasoning":"Source is relevant and contains new information about Leigh.","headline":"Leigh Squad Gearing Up","summary":"Sources report training improvements.","article_html":"<p>Leigh have sharpened their middle rotation this week, with repeated contact blocks and short-yardage drills aimed at improving first-contact wins and quicker ruck speed through the centre channel.</p><p>Coaches have also adjusted edge combinations so the outside backs can exploit broken-field transitions, giving Leigh more shape when they kick early and then chase hard to pin opponents in their own third.</p><p>The net effect is a clearer game model: defend with discipline, build pressure through repeat sets, and turn territory into scoreboard moments rather than forcing low-percentage plays in traffic.</p><p>Supporters should watch the early-set control battle because that phase is likely to decide whether Leigh can build sustained pressure or spend long stretches defending exits.</p>"}),
+         model: "fake-triage"
+       }}
     end
   end
 
@@ -270,13 +227,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     assert article.title == "Leigh Squad Gearing Up"
     assert article.summary == "Sources report training improvements."
-    assert article.body =~ "Line one discussion"
-    assert article.body =~ "Line two continues"
+    assert article.body =~ "middle rotation"
+    assert article.body =~ "repeat sets"
     refute article.title =~ "<"
     refute article.summary =~ "<"
-    refute article.body =~ "<"
-    refute article.summary =~ "&nbsp;"
-    refute article.body =~ "&nbsp;"
   end
 
   test "returns retryable error when llm draft generation is unavailable" do
@@ -393,7 +347,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
 
     [article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
-    assert article.title == "Leigh Source Contract Holds"
+    assert article.title == "Leigh Tune Edge Combinations Ahead of Weekend Test"
   end
 
   test "keeps source pending when full source content is not ready" do
@@ -469,6 +423,41 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     source_after = Repo.get!(RawSource, source.id)
     assert source_after.status == "ignored"
+  end
+
+  test "still marks source ignored when irrelevant and llm draft is disabled" do
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: false,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, source} =
+      Ingestion.create_raw_source(%{
+        title: "Manchester football transfer update",
+        url: "https://example.com/non-leigh-irrelevant-no-llm",
+        content: "Manchester transfer latest with no rugby league relevance.",
+        body_summary: "No club relevance.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 09:35:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    source_after = Repo.get!(RawSource, source.id)
+    assert source_after.status == "ignored"
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert ai_articles == []
   end
 
   test "uses configured worker timeout for execution guard" do
@@ -560,6 +549,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert decision.source_count == 1
     assert decision.prompt_version == "source_editorial_test"
     assert decision.permanent_article_id == article.id
+    assert decision.decision_source in ["llm", "deterministic"]
 
     [job_event] = Intelligence.recent_job_effect_events(1)
     assert job_event.decision_action in ["created", "updated"]
@@ -601,6 +591,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     [article] = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
 
+    assert article.body =~ "<p>"
     assert article.body =~ "Key update from the camp."
     refute article.body =~ "<a"
     refute article.body =~ "&nbsp;"
@@ -724,7 +715,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert length(ai_articles) == 1
   end
 
-  test "groups similar headlines into one article and aggregates all source links" do
+  test "uses similar source and published context to group into one article" do
     assert {:ok, _} =
              Ingestion.create_raw_source(%{
                title: "Super League: Leigh overcome Toulouse as Charnley scores four tries",
@@ -753,9 +744,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
 
     assert count_article_sources(article.id) == 2
 
-    [decision] = Intelligence.recent_article_generation_decisions(1)
-    assert decision.source_count == 1
-    assert decision.decision_action in ["created", "updated"]
+    decisions = Intelligence.recent_article_generation_decisions(5)
+    assert Enum.any?(decisions, &(&1.decision_action in ["created", "updated"]))
   end
 
   test "groups contract-hint and playing-future Charnley headlines into one article" do
@@ -789,7 +779,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert count_article_sources(article.id) == 2
   end
 
-  test "uses optional llm grouping for borderline headline similarity" do
+  test "creates separate articles when model returns new action for both sources" do
     Application.put_env(:leythers_com, :llm,
       adapter: FakeClusteringAdapter,
       model: "fake-clustering"

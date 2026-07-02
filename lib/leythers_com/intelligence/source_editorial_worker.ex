@@ -15,6 +15,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Ingestion.RawSourceStatusMachine
   alias LeythersCom.Intelligence
+  alias LeythersCom.Intelligence.DecisionEngine
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.LLMClient
   alias LeythersCom.Intelligence.StorySimilarity
@@ -450,6 +451,15 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
        ) do
     triage_action = Map.get(attrs, :triage_action, :new)
     target_article_id = Map.get(attrs, :target_article_id)
+    decision_source = Map.get(attrs, :decision_source, "deterministic")
+    decision_confidence = Map.get(attrs, :decision_confidence, 0.0)
+    fallback_reason = Map.get(attrs, :fallback_reason)
+
+    decision_attrs =
+      decision_attrs
+      |> Map.put(:decision_source, decision_source)
+      |> Map.put(:decision_confidence, decision_confidence)
+      |> Map.put(:fallback_reason, fallback_reason)
 
     if triage_action == :skip do
       summary =
@@ -477,7 +487,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
           run_id: run_id,
           prompt_version: prompt_version(),
           llm_cost: llm_cost_attrs,
-          rumour: rumour?
+          rumour: rumour?,
+          decision_source: decision_source,
+          decision_confidence: decision_confidence,
+          fallback_reason: fallback_reason
         },
         error_summary: nil
       })
@@ -492,7 +505,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         prompt_version: prompt_version(),
         llm_input_tokens: llm_cost_attrs.input_tokens,
         llm_output_tokens: llm_cost_attrs.output_tokens,
-        target_article_id: target_article_id
+        target_article_id: target_article_id,
+        decision_source: decision_source,
+        decision_confidence: decision_confidence,
+        fallback_reason: fallback_reason
       })
 
       ignored_count = mark_sources_ignored(source_ids)
@@ -534,7 +550,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               run_id: run_id,
               prompt_version: prompt_version(),
               llm_cost: llm_cost_attrs,
-              rumour: rumour?
+              rumour: rumour?,
+              decision_source: decision_source,
+              decision_confidence: decision_confidence,
+              fallback_reason: fallback_reason
             },
             error_summary: nil
           })
@@ -550,6 +569,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             llm_input_tokens: llm_cost_attrs.input_tokens,
             llm_output_tokens: llm_cost_attrs.output_tokens,
             target_article_id: target_article_id,
+            decision_source: decision_source,
+            decision_confidence: decision_confidence,
+            fallback_reason: fallback_reason,
             permanent_article_id: article.id
           })
 
@@ -581,7 +603,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               run_id: run_id,
               prompt_version: prompt_version(),
               llm_cost: llm_cost_attrs,
-              rumour: rumour?
+              rumour: rumour?,
+              decision_source: decision_source,
+              decision_confidence: decision_confidence,
+              fallback_reason: fallback_reason
             },
             error_summary: inspect(reason)
           })
@@ -597,6 +622,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             llm_input_tokens: llm_cost_attrs.input_tokens,
             llm_output_tokens: llm_cost_attrs.output_tokens,
             target_article_id: target_article_id,
+            decision_source: decision_source,
+            decision_confidence: decision_confidence,
+            fallback_reason: fallback_reason,
             error: inspect(reason)
           })
 
@@ -1429,17 +1457,21 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     normalized_action = Map.get(attrs, :triage_action)
 
     if normalized_action in [:new, :update] do
-      case best_similar_published_match(attrs, entries) do
-        %{article_id: article_id, text_score: text_score, title_score: title_score}
-        when is_binary(article_id) and
-               (text_score >= @article_similarity_update_threshold or
-                  title_score >= @headline_recent_similarity_threshold) ->
+      case DecisionEngine.decide_similarity_action(
+             attrs,
+             entries,
+             llm_enabled: llm_draft_enabled?(),
+             article_similarity_update_threshold: @article_similarity_update_threshold,
+             headline_recent_similarity_threshold: @headline_recent_similarity_threshold,
+             llm_timeout_ms: llm_draft_timeout_ms()
+           ) do
+        {:ok, decision} ->
           attrs
-          |> Map.put(:triage_action, :update)
-          |> Map.put(:target_article_id, article_id)
-
-        _ ->
-          attrs
+          |> Map.put(:triage_action, Map.get(decision, :triage_action, normalized_action))
+          |> Map.put(:target_article_id, Map.get(decision, :target_article_id))
+          |> Map.put(:decision_source, Map.get(decision, :decision_source, "deterministic"))
+          |> Map.put(:decision_confidence, Map.get(decision, :decision_confidence, 0.0))
+          |> Map.put(:fallback_reason, Map.get(decision, :fallback_reason))
       end
     else
       attrs
@@ -1447,40 +1479,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp reconcile_similarity_action(attrs, _context), do: attrs
-
-  defp best_similar_published_match(attrs, entries) do
-    candidate_text =
-      [
-        Map.get(attrs, :headline, ""),
-        Map.get(attrs, :summary, ""),
-        Map.get(attrs, :body_html, "")
-      ]
-      |> Enum.join(" ")
-      |> sanitize_plain_text_strict()
-
-    entries
-    |> Enum.map(fn entry ->
-      article_text =
-        [
-          Map.get(entry, :headline, ""),
-          Map.get(entry, :summary, ""),
-          Map.get(entry, :article_html, "")
-        ]
-        |> Enum.join(" ")
-        |> sanitize_plain_text_strict()
-
-      %{
-        article_id: Map.get(entry, :article_id),
-        text_score: StorySimilarity.score(candidate_text, article_text),
-        title_score:
-          StorySimilarity.score(
-            sanitize_plain_text_strict(Map.get(attrs, :headline, "")),
-            sanitize_plain_text_strict(Map.get(entry, :headline, ""))
-          )
-      }
-    end)
-    |> Enum.max_by(fn result -> max(result.text_score, result.title_score) end, fn -> nil end)
-  end
 
   defp relevant_sources_for_draft(cluster_sources) do
     cluster_sources

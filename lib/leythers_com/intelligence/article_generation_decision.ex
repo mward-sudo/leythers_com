@@ -5,6 +5,7 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
   alias LeythersCom.Content.PermanentArticle
 
   @valid_actions ~w[created updated skipped_budget skipped_publish_error]
+  @valid_decision_sources ~w[llm deterministic]
 
   @primary_key {:id, :binary_id, autogenerate: true}
   @foreign_key_type :binary_id
@@ -17,6 +18,9 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
     field :significance_threshold, :integer, default: 0
     field :prompt_version, :string
     field :decision_summary, :string
+    field :decision_source, :string
+    field :decision_confidence, :float
+    field :fallback_reason, :string
     field :input_tokens, :integer, default: 0
     field :output_tokens, :integer, default: 0
     field :estimated_cost_gbp, :decimal, default: Decimal.new("0")
@@ -37,6 +41,9 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
       :significance_threshold,
       :prompt_version,
       :decision_summary,
+      :decision_source,
+      :decision_confidence,
+      :fallback_reason,
       :input_tokens,
       :output_tokens,
       :estimated_cost_gbp,
@@ -52,6 +59,8 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
       :prompt_version
     ])
     |> validate_inclusion(:decision_action, @valid_actions)
+    |> maybe_validate_decision_source()
+    |> maybe_validate_decision_confidence()
     |> validate_number(:source_count, greater_than_or_equal_to: 0)
     |> validate_number(:significance_score,
       greater_than_or_equal_to: 0,
@@ -65,5 +74,25 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
     |> validate_number(:output_tokens, greater_than_or_equal_to: 0)
     |> validate_number(:estimated_cost_gbp, greater_than_or_equal_to: 0)
     |> foreign_key_constraint(:permanent_article_id)
+  end
+
+  defp maybe_validate_decision_source(changeset) do
+    case get_field(changeset, :decision_source) do
+      nil -> changeset
+      _value -> validate_inclusion(changeset, :decision_source, @valid_decision_sources)
+    end
+  end
+
+  defp maybe_validate_decision_confidence(changeset) do
+    case get_field(changeset, :decision_confidence) do
+      nil ->
+        changeset
+
+      _value ->
+        validate_number(changeset, :decision_confidence,
+          greater_than_or_equal_to: 0,
+          less_than_or_equal_to: 1
+        )
+    end
   end
 end
