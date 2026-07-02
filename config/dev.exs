@@ -35,9 +35,10 @@ config :leythers_com, LeythersComWeb.Endpoint,
 config :leythers_com,
   llm_comparison_timeout_ms: 60_000
 
-# In dev, run ingestion with moderate concurrency and intelligence with higher concurrency
-# to allow multiple LLM requests to process in parallel across workers.
-config :leythers_com, Oban, queues: [ingestion: 2, intelligence: 10]
+# In dev, run ingestion with moderate concurrency and intelligence with high concurrency
+# to allow many parallel LLM requests. With batch_size=100 and max_batches=100,
+# we can queue up to 100 concurrent cluster jobs for processing.
+config :leythers_com, Oban, queues: [ingestion: 2, intelligence: 50]
 
 # Use a gradual circuit cooldown ramp for local Ollama to avoid burst/recover churn.
 config :leythers_com, :llm_guard,
