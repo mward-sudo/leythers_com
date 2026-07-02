@@ -36,9 +36,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     # Always use a canonical dispatch task key so that cluster tasks (which share
     # the same worker but carry different args) do not block new dispatch jobs
     # from being inserted via the uniqueness constraint.
-    _ = attrs
+    attrs = Map.new(attrs)
 
-    %{"task" => "dispatch"}
+    attrs
+    |> Map.put_new("task", "dispatch")
+    |> Map.put_new("generation_settings", runtime_settings())
     |> new(
       unique: [
         fields: [:worker, :args],
@@ -73,6 +75,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
   @impl Oban.Worker
   def perform(%Oban.Job{} = job) do
+    Process.put(
+      :leythers_com_source_editorial_runtime_settings,
+      runtime_settings_from_job(job.args)
+    )
+
     if auto_generation_enabled?() do
       case Map.get(job.args, "task") do
         "cluster" -> process_cluster_task(job)
@@ -108,13 +115,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         |> enqueue_source_jobs(run_id)
         |> case do
           :ok ->
-            maybe_enqueue_dispatch_continuation(
-              job,
-              pending_sources,
-              source_limit,
-              max_batches,
-              drain_backlog?
-            )
+            maybe_continue_dispatch(job, run_id, source_limit, max_batches, drain_backlog?)
 
           {:error, reason} ->
             {:error, reason}
@@ -123,20 +124,27 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp enqueue_source_jobs(pending_sources, run_id) do
+    generation_settings = current_generation_settings()
+
     pending_sources
     |> Enum.map(&[&1])
     |> Enum.reduce_while(:ok, fn cluster, :ok ->
-      case build_cluster_job(cluster, run_id) |> Oban.insert() do
+      case build_cluster_job(cluster, run_id, generation_settings) |> Oban.insert() do
         {:ok, _job} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
   end
 
-  defp build_cluster_job(cluster, run_id) do
+  defp build_cluster_job(cluster, run_id, generation_settings) do
     source_ids = Enum.map(cluster, & &1.id)
 
-    %{"task" => "cluster", "process_run_id" => run_id, "source_ids" => source_ids}
+    %{
+      "task" => "cluster",
+      "process_run_id" => run_id,
+      "source_ids" => source_ids,
+      "generation_settings" => generation_settings
+    }
     |> new(
       unique: [
         fields: [:worker, :args],
@@ -154,38 +162,38 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     |> Repo.all()
   end
 
-  defp maybe_enqueue_dispatch_continuation(
+  defp maybe_continue_dispatch(
          _job,
-         _pending_sources,
+         _run_id,
          _source_limit,
          _max_batches,
          false
        ),
        do: :ok
 
-  defp maybe_enqueue_dispatch_continuation(
-         _job,
-         _pending_sources,
-         _source_limit,
-         max_batches,
-         _drain_backlog?
-       )
+  defp maybe_continue_dispatch(_job, _run_id, _source_limit, max_batches, _drain_backlog?)
        when max_batches <= 1,
        do: :ok
 
-  defp maybe_enqueue_dispatch_continuation(_job, pending_sources, source_limit, max_batches, true) do
-    if length(pending_sources) < source_limit do
-      :ok
+  defp maybe_continue_dispatch(job, run_id, source_limit, max_batches, true) do
+    if oban_inline_testing?() do
+      dispatch_cluster_tasks(job, run_id, source_limit, max_batches - 1, true)
     else
-      _max_batches_left = max_batches - 1
       enqueue_dispatch_continuation()
     end
   end
 
+  defp oban_inline_testing? do
+    :leythers_com
+    |> Application.get_env(Oban, [])
+    |> Keyword.get(:testing) == :inline
+  end
+
   defp enqueue_dispatch_continuation do
     delay_seconds = div(dispatch_delay_ms(), 1_000) |> max(1)
+    generation_settings = current_generation_settings()
 
-    %{"task" => "dispatch"}
+    %{"task" => "dispatch", "generation_settings" => generation_settings}
     |> new(
       schedule_in: delay_seconds,
       unique: [
@@ -573,14 +581,17 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       relevant_sources ->
         relevant_sources
         |> llm_prompt(rumour?)
-        |> run_llm_draft()
+        |> run_llm_draft(runtime_setting(:llm_config, LLMClient.llm_config()) |> Enum.into([]))
     end
   end
 
-  defp run_llm_draft(prompt) do
+  defp run_llm_draft(prompt, llm_config) do
     # Run LLM draft generation in a supervised task so we can fail fast and retry quickly.
     case run_with_timeout(fn ->
-           LLMClient.generate(prompt, timeout_ms: llm_draft_timeout_ms())
+           LLMClient.generate(prompt,
+             timeout_ms: llm_draft_timeout_ms(),
+             llm_config: llm_config
+           )
          end) do
       {:ok, %{text: text}} -> parse_and_record_draft(prompt, text)
       {:error, reason} -> {:error, reason}
@@ -877,76 +888,52 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp auto_generation_enabled? do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:auto_generation_enabled, true)
+    runtime_setting(:auto_generation_enabled, true)
   end
 
   defp llm_draft_enabled? do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:llm_draft_enabled, true)
+    runtime_setting(:llm_draft_enabled, true)
   end
 
   defp llm_cost_per_1k_tokens_gbp do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:llm_cost_per_1k_tokens_gbp, "0.000000")
+    runtime_setting(:llm_cost_per_1k_tokens_gbp, "0.000000")
     |> Decimal.new()
   end
 
   defp default_batch_size do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:source_batch_size, @default_batch_size)
+    runtime_setting(:source_batch_size, @default_batch_size)
   end
 
   defp max_batches_per_run do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:max_batches_per_run, @default_max_batches_per_run)
+    runtime_setting(:max_batches_per_run, @default_max_batches_per_run)
   end
 
   defp significance_threshold do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:significance_threshold, @default_significance_threshold)
+    runtime_setting(:significance_threshold, @default_significance_threshold)
   end
 
   defp prompt_version do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:prompt_version, @default_prompt_version)
+    runtime_setting(:prompt_version, @default_prompt_version)
   end
 
   defp enqueue_unique_seconds do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:source_editorial_enqueue_unique_seconds, @default_enqueue_unique_seconds)
+    runtime_setting(:source_editorial_enqueue_unique_seconds, @default_enqueue_unique_seconds)
   end
 
   defp worker_timeout_ms do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms)
+    runtime_setting(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms)
   end
 
   defp llm_draft_timeout_ms do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:llm_draft_timeout_ms, @default_llm_draft_timeout_ms)
+    runtime_setting(:llm_draft_timeout_ms, @default_llm_draft_timeout_ms)
   end
 
   defp dispatch_delay_ms do
     max_delay_ms =
-      :leythers_com
-      |> Application.get_env(:intelligence_generation, [])
-      |> Keyword.get(:source_editorial_dispatch_delay_max_ms, @default_dispatch_delay_max_ms)
+      runtime_setting(:source_editorial_dispatch_delay_max_ms, @default_dispatch_delay_max_ms)
       |> normalize_non_negative_int(@default_dispatch_delay_max_ms)
 
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:source_editorial_dispatch_delay_ms, @default_dispatch_delay_ms)
+    runtime_setting(:source_editorial_dispatch_delay_ms, @default_dispatch_delay_ms)
     |> normalize_non_negative_int(@default_dispatch_delay_ms)
     |> min(max_delay_ms)
   end
@@ -958,21 +945,129 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp normalize_non_negative_int(_value, default), do: default
 
   defp retry_base_seconds do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:source_editorial_retry_base_seconds, @default_retry_base_seconds)
+    runtime_setting(:source_editorial_retry_base_seconds, @default_retry_base_seconds)
   end
 
   defp retry_max_seconds do
-    :leythers_com
-    |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:source_editorial_retry_max_seconds, @default_retry_max_seconds)
+    runtime_setting(:source_editorial_retry_max_seconds, @default_retry_max_seconds)
   end
 
   defp retry_persist_threshold do
+    runtime_setting(:source_editorial_retry_persist_threshold, @default_retry_persist_threshold)
+  end
+
+  defp runtime_settings do
+    %{
+      auto_generation_enabled: read_generation_setting(:auto_generation_enabled, true),
+      llm_draft_enabled: read_generation_setting(:llm_draft_enabled, true),
+      llm_cost_per_1k_tokens_gbp:
+        read_generation_setting(:llm_cost_per_1k_tokens_gbp, "0.000000"),
+      source_batch_size: read_generation_setting(:source_batch_size, @default_batch_size),
+      max_batches_per_run:
+        read_generation_setting(:max_batches_per_run, @default_max_batches_per_run),
+      significance_threshold:
+        read_generation_setting(:significance_threshold, @default_significance_threshold),
+      prompt_version: read_generation_setting(:prompt_version, @default_prompt_version),
+      source_editorial_enqueue_unique_seconds:
+        read_generation_setting(
+          :source_editorial_enqueue_unique_seconds,
+          @default_enqueue_unique_seconds
+        ),
+      source_editorial_worker_timeout_ms:
+        read_generation_setting(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms),
+      llm_draft_timeout_ms:
+        read_generation_setting(:llm_draft_timeout_ms, @default_llm_draft_timeout_ms),
+      source_editorial_dispatch_delay_ms:
+        read_generation_setting(:source_editorial_dispatch_delay_ms, @default_dispatch_delay_ms),
+      source_editorial_dispatch_delay_max_ms:
+        read_generation_setting(
+          :source_editorial_dispatch_delay_max_ms,
+          @default_dispatch_delay_max_ms
+        ),
+      source_editorial_retry_base_seconds:
+        read_generation_setting(:source_editorial_retry_base_seconds, @default_retry_base_seconds),
+      source_editorial_retry_max_seconds:
+        read_generation_setting(:source_editorial_retry_max_seconds, @default_retry_max_seconds),
+      source_editorial_retry_persist_threshold:
+        read_generation_setting(
+          :source_editorial_retry_persist_threshold,
+          @default_retry_persist_threshold
+        ),
+      llm_config: LLMClient.llm_config() |> Map.new()
+    }
+  end
+
+  defp runtime_settings_from_job(args) when is_map(args) do
+    case Map.get(args, "generation_settings") do
+      %{} = generation_settings ->
+        Map.merge(runtime_settings(), normalize_settings_map(generation_settings))
+
+      _other ->
+        runtime_settings()
+    end
+  end
+
+  defp runtime_settings_from_job(_args), do: runtime_settings()
+
+  defp current_generation_settings do
+    Process.get(:leythers_com_source_editorial_runtime_settings) || runtime_settings()
+  end
+
+  defp runtime_setting(key, default) do
+    runtime_settings = Process.get(:leythers_com_source_editorial_runtime_settings)
+
+    case runtime_settings do
+      %{} = settings -> Map.get(settings, key, default)
+      _other -> read_generation_setting(key, default)
+    end
+  end
+
+  defp read_generation_setting(key, default) do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
-    |> Keyword.get(:source_editorial_retry_persist_threshold, @default_retry_persist_threshold)
+    |> Keyword.get(key, default)
+  end
+
+  defp normalize_settings_map(settings) when is_map(settings) do
+    Enum.reduce(settings, %{}, fn {key, value}, acc ->
+      normalized_key = normalize_setting_key(key)
+      normalized_value = normalize_setting_value(normalized_key, value)
+      Map.put(acc, normalized_key, normalized_value)
+    end)
+  end
+
+  defp normalize_settings_map(settings) when is_list(settings) do
+    settings |> Map.new() |> normalize_settings_map()
+  end
+
+  defp normalize_settings_map(_settings), do: %{}
+
+  defp normalize_setting_key(key) when is_atom(key), do: key
+
+  defp normalize_setting_key(key) when is_binary(key) do
+    string_to_existing_atom(key) || key
+  end
+
+  defp normalize_setting_key(key), do: key
+
+  defp normalize_setting_value(:llm_config, value) when is_map(value),
+    do: normalize_settings_map(value)
+
+  defp normalize_setting_value(:llm_config, value) when is_list(value),
+    do: normalize_settings_map(value)
+
+  defp normalize_setting_value(:llm_config, value), do: value
+
+  defp normalize_setting_value(:adapter, value) when is_binary(value) do
+    string_to_existing_atom(value) || value
+  end
+
+  defp normalize_setting_value(_key, value), do: value
+
+  defp string_to_existing_atom(value) when is_binary(value) do
+    String.to_existing_atom(value)
+  rescue
+    ArgumentError -> nil
   end
 
   defp persist_decision(base_attrs, action, article_id, summary, llm_cost_attrs) do

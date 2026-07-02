@@ -1,12 +1,13 @@
 defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
   @moduledoc false
-  use LeythersCom.DataCase, async: true
+  use LeythersCom.DataCase, async: false
 
   alias LeythersCom.Content
   alias LeythersCom.Ingestion
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.ArticleGenerationDecision
+  alias LeythersCom.Intelligence.LLMGuard
   alias LeythersCom.Intelligence.SourceEditorialWorker
 
   defmodule FakeDraftAdapter do
@@ -200,6 +201,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
   setup do
     original_generation_config = Application.get_env(:leythers_com, :intelligence_generation)
     original_llm_config = Application.get_env(:leythers_com, :llm)
+
+    LLMGuard.report_success()
+    _ = :sys.get_state(LLMGuard)
 
     on_exit(fn ->
       Application.put_env(:leythers_com, :intelligence_generation, original_generation_config)

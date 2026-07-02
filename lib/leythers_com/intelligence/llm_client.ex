@@ -37,9 +37,9 @@ defmodule LeythersCom.Intelligence.LLMClient do
   end
 
   defp do_generate(prompt, opts) do
-    config = llm_config()
+    config = Keyword.get(opts, :llm_config, llm_config())
     adapter = config[:adapter] || Ollama
-    result = adapter.generate(prompt, Keyword.merge(config, opts))
+    result = adapter.generate(prompt, Keyword.merge(config, Keyword.delete(opts, :llm_config)))
 
     report_result(result)
     result
