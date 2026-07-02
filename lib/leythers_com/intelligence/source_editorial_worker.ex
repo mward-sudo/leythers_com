@@ -256,6 +256,15 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             }
           )
 
+        {:error, :source_content_not_ready} ->
+          handle_content_not_ready_cluster(
+            job,
+            source_ids,
+            run_id,
+            decision_attrs,
+            cluster_snapshot
+          )
+
         {:error, :no_relevant_sources} ->
           handle_irrelevant_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot)
 
@@ -442,6 +451,46 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     {:ok, ignored_count}
   end
 
+  defp handle_content_not_ready_cluster(
+         job,
+         source_ids,
+         run_id,
+         decision_attrs,
+         cluster_snapshot
+       ) do
+    summary =
+      "sources #{length(source_ids)} waiting for full content before editorial draft"
+
+    llm_cost_attrs = zero_cost_attrs()
+
+    persist_decision(
+      decision_attrs,
+      "skipped_waiting_content",
+      nil,
+      summary,
+      llm_cost_attrs
+    )
+
+    persist_job_effect_event(job, %{
+      decision_action: "skipped_waiting_content",
+      permanent_article_id: nil,
+      process_run_id: run_id,
+      source_ids: source_ids,
+      source_input_snapshot: cluster_snapshot,
+      change_summary: summary,
+      change_details: %{
+        source_count: length(source_ids),
+        run_id: run_id,
+        prompt_version: prompt_version(),
+        llm_cost: llm_cost_attrs,
+        reason: "source_content_not_ready"
+      },
+      error_summary: nil
+    })
+
+    {:ok, 0}
+  end
+
   defp build_article_attrs(cluster_sources) do
     primary = List.first(cluster_sources)
     summary_fallback = deterministic_article_summary(cluster_sources)
@@ -462,7 +511,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp llm_draft_attrs(cluster_sources, rumour?) do
     case relevant_sources_for_draft(cluster_sources) do
       [] ->
-        {:error, :no_relevant_sources}
+        if has_full_content?(cluster_sources) do
+          {:error, :no_relevant_sources}
+        else
+          {:error, :source_content_not_ready}
+        end
 
       relevant_sources ->
         relevant_sources
@@ -707,6 +760,15 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       title = sanitize_plain_text_strict(source.title)
 
       not blank?(content) and not blank?(title) and relevant_to_leigh?(source)
+    end)
+  end
+
+  defp has_full_content?(cluster_sources) do
+    Enum.any?(cluster_sources, fn source ->
+      source.content
+      |> sanitize_plain_text_strict()
+      |> blank?()
+      |> Kernel.not()
     end)
   end
 

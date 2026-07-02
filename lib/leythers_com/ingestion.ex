@@ -368,6 +368,19 @@ defmodule LeythersCom.Ingestion do
 
   defp spawn_content_fetcher(_source_ids), do: :ok
 
+  defp persist_fetched_content(source, content) do
+    case source
+         |> RawSource.changeset(%{content: content})
+         |> Repo.update() do
+      {:ok, _updated_source} ->
+        _ = SourceEditorialWorker.enqueue(%{"drain_backlog" => true})
+        :ok
+
+      _ ->
+        :ok
+    end
+  end
+
   defp fetch_and_store_content(source_id) do
     case Repo.get(RawSource, source_id) do
       nil ->
@@ -376,9 +389,7 @@ defmodule LeythersCom.Ingestion do
       source ->
         case ArticleContentFetcher.fetch_and_extract(source.url) do
           {:ok, content} ->
-            source
-            |> RawSource.changeset(%{content: content})
-            |> Repo.update()
+            persist_fetched_content(source, content)
 
           {:error, _reason} ->
             # Log but don't fail - body_summary is sufficient fallback

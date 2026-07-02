@@ -347,7 +347,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert article.title == "Leigh Source Contract Holds"
   end
 
-  test "marks source ignored when no relevant source content is available" do
+  test "keeps source pending when full source content is not ready" do
     Application.put_env(:leythers_com, :llm,
       adapter: FakeTriageAdapter,
       model: "fake-triage"
@@ -380,9 +380,46 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
 
     source_after = Repo.get!(RawSource, source.id)
-    assert source_after.status == "ignored"
+    assert source_after.status == "pending"
 
-    assert Ingestion.list_raw_sources(status: "pending") == []
+    assert Ingestion.list_raw_sources(status: "pending") != []
+  end
+
+  test "marks source ignored when full content exists but source is irrelevant" do
+    Application.put_env(:leythers_com, :llm,
+      adapter: FakeTriageAdapter,
+      model: "fake-triage"
+    )
+
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: true,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, source} =
+      Ingestion.create_raw_source(%{
+        title: "Manchester football transfer update",
+        url: "https://example.com/non-leigh-irrelevant",
+        content: "Manchester transfer latest with no rugby league relevance.",
+        body_summary: "No club relevance.",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 09:25:00.000000Z]
+      })
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: %{}})
+
+    source_after = Repo.get!(RawSource, source.id)
+    assert source_after.status == "ignored"
   end
 
   test "uses configured worker timeout for execution guard" do
