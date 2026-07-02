@@ -101,6 +101,80 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
     assert hd(ranked).article.title == "New source"
   end
 
+  test "suppresses near-duplicate stories by title similarity" do
+    now = DateTime.utc_now()
+
+    newer =
+      entry("Leopards sign Melbourne Storm prop for 2026", now, [%{id: "a-1"}])
+
+    older =
+      entry(
+        "Leopards land Melbourne prop signing from Storm",
+        DateTime.add(now, -30 * 60, :second),
+        [%{id: "b-1"}]
+      )
+
+    ranked =
+      HomepageRanker.rank([older, newer],
+        llm_enabled: false,
+        recency_weight: 0.7,
+        importance_weight: 0.3
+      )
+
+    assert length(ranked) == 1
+    assert hd(ranked).article.title == "Leopards sign Melbourne Storm prop for 2026"
+  end
+
+  test "suppresses duplicates when source overlap exists" do
+    now = DateTime.utc_now()
+
+    first =
+      entry("Leigh edge rivals in thriller", now, [%{raw_source_id: "shared-source"}])
+
+    second =
+      entry(
+        "Another angle on the same match result",
+        DateTime.add(now, -15 * 60, :second),
+        [%{raw_source_id: "shared-source"}]
+      )
+
+    ranked =
+      HomepageRanker.rank([second, first],
+        llm_enabled: false,
+        recency_weight: 0.7,
+        importance_weight: 0.3
+      )
+
+    assert length(ranked) == 1
+    assert hd(ranked).article.title == "Leigh edge rivals in thriller"
+  end
+
+  test "suppresses near-duplicate stories by article text similarity" do
+    now = DateTime.utc_now()
+
+    first =
+      entry("Different headline one", now, [%{id: "t-1"}])
+      |> Map.update!(:article, fn article ->
+        %{article | body: "Leigh sign Melbourne Storm prop after transfer talks"}
+      end)
+
+    second =
+      entry("Different headline two", DateTime.add(now, -10 * 60, :second), [%{id: "t-2"}])
+      |> Map.update!(:article, fn article ->
+        %{article | body: "Transfer talks end with Leigh signing Melbourne Storm prop"}
+      end)
+
+    ranked =
+      HomepageRanker.rank([second, first],
+        llm_enabled: false,
+        recency_weight: 0.7,
+        importance_weight: 0.3
+      )
+
+    assert length(ranked) == 1
+    assert hd(ranked).article.title == "Different headline one"
+  end
+
   defp entry(title, timestamp, source_markers) do
     %{
       article: %PermanentArticle{

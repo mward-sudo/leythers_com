@@ -5,6 +5,7 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
   """
 
   alias LeythersCom.Intelligence.LLMClient
+  alias LeythersCom.Intelligence.StorySimilarity
 
   @cache_table :leythers_com_homepage_rank_cache
 
@@ -15,7 +16,10 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     llm_timeout_ms: 2_500,
     recency_weight: 0.45,
     importance_weight: 0.55,
-    max_age_hours: 72
+    max_age_hours: 72,
+    similar_story_threshold: 0.5,
+    similar_story_text_threshold: 0.42,
+    similar_source_title_threshold: 0.45
   ]
 
   def rank(entries, opts \\ []) when is_list(entries) do
@@ -32,6 +36,7 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
         score_entry(entry, llm_candidate?, now, config)
       end)
       |> Enum.sort_by(& &1.hybrid_score, :desc)
+      |> dedupe_ranked_entries(config)
 
     emit_ranker_telemetry(ranked, started_at)
     ranked
@@ -262,6 +267,111 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
       %{result: :ok, article_count: length(ranked)}
     )
   end
+
+  defp dedupe_ranked_entries(ranked, config) do
+    title_threshold = config[:similar_story_threshold] || 0.5
+    text_threshold = config[:similar_story_text_threshold] || 0.42
+    source_title_threshold = config[:similar_source_title_threshold] || 0.45
+
+    ranked
+    |> Enum.reduce([], fn candidate, acc ->
+      if Enum.any?(
+           acc,
+           &same_story?(&1, candidate, title_threshold, text_threshold, source_title_threshold)
+         ) do
+        acc
+      else
+        [candidate | acc]
+      end
+    end)
+    |> Enum.reverse()
+  end
+
+  defp same_story?(entry_a, entry_b, title_threshold, text_threshold, source_title_threshold) do
+    similar_titles?(entry_a, entry_b, title_threshold) or
+      similar_article_text?(entry_a, entry_b, text_threshold) or
+      similar_source_titles?(entry_a, entry_b, source_title_threshold) or
+      source_overlap?(entry_a, entry_b)
+  end
+
+  defp similar_titles?(entry_a, entry_b, threshold) do
+    StorySimilarity.similar?(entry_title(entry_a), entry_title(entry_b), threshold)
+  end
+
+  defp entry_title(%{article: %{title: title}}) when is_binary(title), do: title
+  defp entry_title(_entry), do: ""
+
+  defp similar_article_text?(entry_a, entry_b, threshold) do
+    text_a = article_similarity_text(entry_a)
+    text_b = article_similarity_text(entry_b)
+
+    if text_a == "" or text_b == "" do
+      false
+    else
+      StorySimilarity.score(text_a, text_b) >= threshold
+    end
+  end
+
+  defp article_similarity_text(%{article: article}) when is_map(article) do
+    [
+      Map.get(article, :summary) || Map.get(article, "summary"),
+      Map.get(article, :body) || Map.get(article, "body")
+    ]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join("\n")
+  end
+
+  defp article_similarity_text(_entry), do: ""
+
+  defp similar_source_titles?(entry_a, entry_b, threshold) do
+    source_titles_a = source_titles(entry_a)
+    source_titles_b = source_titles(entry_b)
+
+    Enum.any?(source_titles_a, fn title_a ->
+      Enum.any?(source_titles_b, fn title_b ->
+        StorySimilarity.similar?(title_a, title_b, threshold)
+      end)
+    end)
+  end
+
+  defp source_titles(%{sources: sources}) when is_list(sources) do
+    sources
+    |> Enum.map(fn
+      %{title: title} when is_binary(title) -> title
+      %{"title" => title} when is_binary(title) -> title
+      _ -> nil
+    end)
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp source_titles(_entry), do: []
+
+  defp source_overlap?(entry_a, entry_b) do
+    source_set_a = source_fingerprint_set(entry_a)
+    source_set_b = source_fingerprint_set(entry_b)
+
+    if MapSet.size(source_set_a) == 0 or MapSet.size(source_set_b) == 0 do
+      false
+    else
+      not MapSet.disjoint?(source_set_a, source_set_b)
+    end
+  end
+
+  defp source_fingerprint_set(%{sources: sources}) when is_list(sources) do
+    sources
+    |> Enum.map(&source_fingerprint/1)
+    |> Enum.reject(&is_nil/1)
+    |> MapSet.new()
+  end
+
+  defp source_fingerprint_set(_entry), do: MapSet.new()
+
+  defp source_fingerprint(%{} = source) do
+    source[:raw_source_id] || source["raw_source_id"] || source[:id] || source["id"] ||
+      source[:url] || source["url"] || source[:source_url] || source["source_url"]
+  end
+
+  defp source_fingerprint(source), do: source
 
   defp config do
     Application.get_env(:leythers_com, :homepage_ranking, @default_config)

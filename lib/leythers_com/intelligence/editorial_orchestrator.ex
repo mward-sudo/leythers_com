@@ -206,6 +206,9 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
         :recency_weight,
         :importance_weight,
         :max_age_hours,
+        :similar_story_threshold,
+        :similar_story_text_threshold,
+        :similar_source_title_threshold,
         :importance_generator,
         :async,
         :triggered_by

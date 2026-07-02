@@ -29,12 +29,13 @@ defmodule LeythersCom.Intelligence.EditorialOrchestratorTest do
   end
 
   test "refresh_homepage_layout/1 persists a decision snapshot" do
-    article = insert_article_with_source("leythers-refresh-one", "https://example.com/source-one")
+    _article =
+      insert_article_with_source("leythers-refresh-one", "https://example.com/source-one")
 
     _other_article =
       insert_article_with_source("leythers-refresh-two", "https://example.com/source-two")
 
-    assert {:ok, %{run_id: run_id, decision_count: 2}} =
+    assert {:ok, %{run_id: run_id, decision_count: 1}} =
              EditorialOrchestrator.refresh_homepage_layout(
                llm_enabled: false,
                source_limit: 10,
@@ -48,13 +49,12 @@ defmodule LeythersCom.Intelligence.EditorialOrchestratorTest do
       |> order_by([decision], asc: decision.rank_position)
       |> Repo.all()
 
-    assert length(decisions) == 2
-    assert Enum.map(decisions, & &1.rank_position) == [1, 2]
+    assert length(decisions) == 1
+    assert Enum.map(decisions, & &1.rank_position) == [1]
     assert Enum.all?(decisions, &(&1.prompt_version == "homepage_ranker_test"))
-    assert Enum.any?(decisions, &(&1.permanent_article_id == article.id))
 
     snapshot = EditorialOrchestrator.latest_homepage_snapshot(2)
-    assert length(snapshot) == 2
+    assert length(snapshot) == 1
     assert Enum.all?(snapshot, &is_map(&1.article))
   end
 
