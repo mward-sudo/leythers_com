@@ -1,9 +1,9 @@
 defmodule LeythersCom.Content.ArticleOutput do
   @moduledoc """
   Defines and validates the three-part article output contract:
-  - headline: compelling Leigh-focused angle
+  - headline: compelling Leigh-focused angle in plain text
   - summary: plain-text teaser (no HTML/markup)
-  - body: full article with voice applied
+  - body: full article body as formatted HTML
 
   All three parts enforce Leythers editorial policies:
   - Headlines lead with Leigh angle, avoid clickbait and major spoilers
@@ -89,16 +89,22 @@ defmodule LeythersCom.Content.ArticleOutput do
   def validate_summary(_), do: ["summary must be a string"]
 
   @doc """
-  Validate body: should be non-empty after stripping.
+  Validate body: should be non-empty formatted HTML.
   Returns list of violation strings (empty = valid).
   """
   def validate_body(body) when is_binary(body) do
     body = String.trim(body)
+    has_html_tag? = Regex.match?(~r/<[^>]+>/, body)
 
-    if body == "" do
-      ["body cannot be empty"]
-    else
-      []
+    cond do
+      body == "" ->
+        ["body cannot be empty"]
+
+      not has_html_tag? ->
+        ["body must be formatted HTML"]
+
+      true ->
+        []
     end
   end
 

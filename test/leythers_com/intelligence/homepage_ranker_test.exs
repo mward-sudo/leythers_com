@@ -101,7 +101,7 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
     assert hd(ranked).article.title == "New source"
   end
 
-  test "suppresses near-duplicate stories by title similarity" do
+  test "keeps near-duplicate stories by title similarity" do
     now = DateTime.utc_now()
 
     newer =
@@ -121,11 +121,11 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
         importance_weight: 0.3
       )
 
-    assert length(ranked) == 1
+    assert length(ranked) == 2
     assert hd(ranked).article.title == "Leopards sign Melbourne Storm prop for 2026"
   end
 
-  test "suppresses duplicates when source overlap exists" do
+  test "keeps duplicates even when source overlap exists" do
     now = DateTime.utc_now()
 
     first =
@@ -145,11 +145,11 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
         importance_weight: 0.3
       )
 
-    assert length(ranked) == 1
+    assert length(ranked) == 2
     assert hd(ranked).article.title == "Leigh edge rivals in thriller"
   end
 
-  test "suppresses near-duplicate stories by article text similarity" do
+  test "keeps near-duplicate stories by article text similarity" do
     now = DateTime.utc_now()
 
     first =
@@ -171,8 +171,76 @@ defmodule LeythersCom.Intelligence.HomepageRankerTest do
         importance_weight: 0.3
       )
 
-    assert length(ranked) == 1
+    assert length(ranked) == 2
     assert hd(ranked).article.title == "Different headline one"
+  end
+
+  test "keeps paraphrased duplicates with strong shared entity tokens" do
+    now = DateTime.utc_now()
+
+    first =
+      entry("Vaalepu power boost for Leopards", now, [
+        %{id: "p-1", title: "Leigh sign Melbourne prop Vaalepu"}
+      ])
+      |> Map.update!(:article, fn article ->
+        %{article | body: "Leigh sign Melbourne Storm prop Lazarus Vaalepu for run-in"}
+      end)
+
+    second =
+      entry("Leopards land a mammoth middle", DateTime.add(now, -10 * 60, :second), [
+        %{id: "p-2", title: "Melbourne prop Lazarus Vaalepu joins Leigh"}
+      ])
+      |> Map.update!(:article, fn article ->
+        %{article | body: "Lazarus Vaalepu gives Leigh a Melbourne prop injection in the middle"}
+      end)
+
+    ranked =
+      HomepageRanker.rank([second, first],
+        llm_enabled: false,
+        recency_weight: 0.7,
+        importance_weight: 0.3
+      )
+
+    assert length(ranked) == 2
+    assert hd(ranked).article.title == "Vaalepu power boost for Leopards"
+  end
+
+  test "downranks generic boilerplate copy even when newer" do
+    now = DateTime.utc_now()
+
+    generic_newer =
+      entry("Leigh Leopards' Current Performance and Upcoming Matches", now, [%{id: "g-1"}])
+      |> Map.update!(:article, fn article ->
+        %{
+          article
+          | summary:
+              "Leigh Leopards are looking to make a statement and are in impressive form lately.",
+            body: "The game should be a closely contested one with a lot to play for."
+        }
+      end)
+
+    specific_older =
+      entry(
+        "Leigh confirm Vaalepu arrival before Toulouse trip",
+        DateTime.add(now, -15 * 60, :second),
+        [%{id: "s-1"}]
+      )
+      |> Map.update!(:article, fn article ->
+        %{
+          article
+          | summary:
+              "Leigh have completed a mid-season prop signing to boost middle rotation depth.",
+            body: "Club details point to an immediate squad role for the Toulouse fixture."
+        }
+      end)
+
+    ranked =
+      HomepageRanker.rank([generic_newer, specific_older],
+        llm_enabled: false,
+        generic_boilerplate_penalty_max: 30.0
+      )
+
+    assert hd(ranked).article.title == "Leigh confirm Vaalepu arrival before Toulouse trip"
   end
 
   defp entry(title, timestamp, source_markers) do

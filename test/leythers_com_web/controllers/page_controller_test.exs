@@ -25,6 +25,7 @@ defmodule LeythersComWeb.PageControllerTest do
       Content.publish_article(
         %{
           title: "Leopards Eye Late Kickoff Boost",
+          summary: "Tight turnaround and key returnees shape Leigh plans.",
           body: "A lively update from the camp."
         },
         [source.id]
@@ -39,12 +40,12 @@ defmodule LeythersComWeb.PageControllerTest do
     html = html_response(conn, 200)
 
     assert html =~ "Leopards Eye Late Kickoff Boost"
+    assert html =~ "Tight turnaround and key returnees shape Leigh plans."
     assert html =~ "score"
-    assert html =~ "Leigh match report"
     assert html =~ "/articles/leopards-eye-late-kickoff-boost"
   end
 
-  test "GET /articles/:slug renders the article and source links", %{conn: conn} do
+  test "GET /articles/:slug renders headline and html article body only", %{conn: conn} do
     {:ok, source} =
       Ingestion.create_raw_source(%{
         title: "Leigh squad update",
@@ -58,7 +59,8 @@ defmodule LeythersComWeb.PageControllerTest do
       Content.publish_article(
         %{
           title: "Leigh squad boost ahead of derby",
-          body: "Body copy for article detail page."
+          summary: "Summary teaser for homepage cards.",
+          body: "<p>Body copy for article detail page.</p>"
         },
         [source.id]
       )
@@ -68,8 +70,8 @@ defmodule LeythersComWeb.PageControllerTest do
 
     assert html =~ "Leigh squad boost ahead of derby"
     assert html =~ "Body copy for article detail page."
-    assert html =~ "Leigh squad update"
-    assert html =~ "https://example.com/leigh-squad-update"
+    refute html =~ "Source links"
+    refute html =~ "Leigh squad update"
   end
 
   test "GET /articles/:slug returns not found for unknown slugs", %{conn: conn} do

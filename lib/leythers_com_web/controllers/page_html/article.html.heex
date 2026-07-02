@@ -24,36 +24,9 @@
     </header>
 
     <article class="rounded-3xl border border-base-300 bg-base-100 p-6 shadow-sm sm:p-8">
-      <div class="prose max-w-none whitespace-pre-line text-base-content/90">
-        {@article.body}
+      <div class="max-w-none text-base text-base-content/90 leading-8 [&_h2]:mt-10 [&_h2]:text-2xl [&_h2]:font-black [&_h2]:tracking-tight [&_h3]:mt-8 [&_h3]:text-xl [&_h3]:font-extrabold [&_p]:my-5 [&_p]:text-[1.06rem] [&_p]:leading-8 [&_ul]:my-6 [&_ul]:list-disc [&_ul]:space-y-2 [&_ul]:pl-6 [&_ol]:my-6 [&_ol]:list-decimal [&_ol]:space-y-2 [&_ol]:pl-6 [&_blockquote]:my-6 [&_blockquote]:border-l-4 [&_blockquote]:border-primary/40 [&_blockquote]:pl-4 [&_blockquote]:italic [&_a]:font-semibold [&_a]:text-primary [&_a]:underline [&_a]:decoration-primary/40 hover:[&_a]:decoration-primary [&_strong]:font-extrabold">
+        {raw(@article.body)}
       </div>
     </article>
-
-    <section
-      class="mt-6 rounded-3xl border border-base-300 bg-base-100 p-6 shadow-sm sm:p-8"
-      id="article-sources"
-    >
-      <h2 class="text-lg font-bold">Source links</h2>
-
-      <%= if @sources == [] do %>
-        <p class="mt-2 text-sm text-base-content/70">No source links for this article.</p>
-      <% else %>
-        <ul class="mt-4 space-y-3">
-          <li :for={source <- @sources} id={"source-link-#{source.id}"}>
-            <a
-              href={source.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              class="link link-hover text-base font-semibold"
-            >
-              {source.title}
-            </a>
-            <p class="mt-1 text-xs text-base-content/60">
-              {source.origin_provider} · {source.last_check_status || "unchecked"}
-            </p>
-          </li>
-        </ul>
-      <% end %>
-    </section>
   </main>
 </div>

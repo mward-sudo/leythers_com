@@ -50,7 +50,7 @@
           </h2>
 
           <p class="mt-3 line-clamp-5 text-sm leading-6 text-base-content/80">
-            {entry.article.body}
+            {entry.article.summary}
           </p>
 
           <div class="mt-4 flex flex-wrap gap-2 text-xs font-semibold uppercase tracking-[0.12em]">
@@ -67,24 +67,6 @@
 
           <div class="mt-4 border-t border-base-300 pt-3 text-xs text-base-content/70">
             <p>Importance {entry.importance_score} · Recency {entry.recency_score}</p>
-            <p class="mt-1 font-mono">/{entry.article.slug}</p>
-
-            <%= if entry.sources == [] do %>
-              <p class="mt-2">No source links attached.</p>
-            <% else %>
-              <ul class="mt-2 space-y-1">
-                <li :for={source <- Enum.take(entry.sources, 2)}>
-                  <a
-                    href={source.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="link link-hover"
-                  >
-                    {source.title}
-                  </a>
-                </li>
-              </ul>
-            <% end %>
           </div>
         </article>
       </section>

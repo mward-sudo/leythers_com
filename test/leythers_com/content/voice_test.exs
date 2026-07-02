@@ -4,7 +4,7 @@ defmodule LeythersCom.Content.VoiceTest do
   alias LeythersCom.Content.Voice
 
   describe "apply/2" do
-    test "adds rumour labeling and fan signoff" do
+    test "adds rumour labeling without appending a repeated signoff" do
       styled =
         Voice.apply(
           %{
@@ -16,7 +16,7 @@ defmodule LeythersCom.Content.VoiceTest do
 
       assert styled.title == "Rumour: Leigh linked with late-window move"
       assert styled.body =~ "Rumour mill warning"
-      assert styled.body =~ "Terrace verdict"
+      refute styled.body =~ "Terrace verdict"
     end
 
     test "avoids duplicating existing rumour label" do
@@ -50,7 +50,7 @@ defmodule LeythersCom.Content.VoiceTest do
 
       assert styled.title == "Speculation: Leigh linked with late-window move"
       assert styled.body =~ "Speculation only until official confirmation."
-      assert styled.body =~ "Fan verdict: write it in marker, not pen."
+      refute styled.body =~ "Fan verdict: write it in marker, not pen."
     end
   end
 end

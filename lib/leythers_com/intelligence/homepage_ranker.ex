@@ -11,15 +11,23 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
 
   @default_config [
     llm_enabled: true,
-    llm_candidate_limit: 1,
+    llm_candidate_limit: 12,
     llm_cooldown_seconds: 1_800,
     llm_timeout_ms: 2_500,
     recency_weight: 0.45,
     importance_weight: 0.55,
     max_age_hours: 72,
-    similar_story_threshold: 0.5,
-    similar_story_text_threshold: 0.42,
-    similar_source_title_threshold: 0.45
+    novelty_penalty_max: 14.0,
+    generic_boilerplate_penalty_max: 12.0
+  ]
+
+  @generic_boilerplate_phrases [
+    "current performance and upcoming matches",
+    "looking to make a statement",
+    "in impressive form lately",
+    "closely contested one",
+    "a lot to play for",
+    "latest news and updates"
   ]
 
   def rank(entries, opts \\ []) when is_list(entries) do
@@ -27,7 +35,7 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     config = config() |> Keyword.merge(opts)
     now = DateTime.utc_now()
 
-    ranked =
+    scored_entries =
       entries
       |> Enum.sort_by(&recency_score(&1, now, config), :desc)
       |> Enum.with_index()
@@ -35,10 +43,14 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
         llm_candidate? = index < config[:llm_candidate_limit]
         score_entry(entry, llm_candidate?, now, config)
       end)
-      |> Enum.sort_by(& &1.hybrid_score, :desc)
-      |> dedupe_ranked_entries(config)
 
-    emit_ranker_telemetry(ranked, started_at)
+    ranked =
+      scored_entries
+      |> Enum.sort_by(& &1.hybrid_score, :desc)
+      |> apply_novelty_penalty(config)
+      |> Enum.sort_by(& &1.hybrid_score, :desc)
+
+    emit_ranker_telemetry(ranked, scored_entries, started_at)
     ranked
   end
 
@@ -65,6 +77,68 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     |> Map.put(:importance_score, importance)
     |> Map.put(:importance_source, importance_source)
     |> Map.put(:hybrid_score, hybrid)
+  end
+
+  defp apply_novelty_penalty(entries, config) when is_list(entries) do
+    penalty_max = config[:novelty_penalty_max] || 14.0
+    generic_penalty_max = config[:generic_boilerplate_penalty_max] || 12.0
+
+    entries
+    |> Enum.with_index()
+    |> Enum.map(fn {entry, idx} ->
+      priors = Enum.take(entries, idx)
+
+      max_similarity =
+        priors
+        |> Enum.map(&entry_similarity_score(entry, &1))
+        |> Enum.max(fn -> 0.0 end)
+
+      novelty_penalty = max_similarity * penalty_max
+      generic_penalty = generic_boilerplate_penalty(entry) * generic_penalty_max
+      penalty = novelty_penalty + generic_penalty
+      adjusted_score = Float.round(max(entry.hybrid_score - penalty, 0.0), 2)
+
+      entry
+      |> Map.put(:hybrid_score, adjusted_score)
+      |> Map.put(:novelty_penalty, Float.round(penalty, 2))
+    end)
+  end
+
+  defp generic_boilerplate_penalty(%{article: article}) do
+    text =
+      [article.title, article.summary, article.body]
+      |> Enum.filter(&is_binary/1)
+      |> Enum.join(" ")
+      |> String.downcase()
+
+    hits =
+      @generic_boilerplate_phrases
+      |> Enum.count(&String.contains?(text, &1))
+
+    min(hits / max(length(@generic_boilerplate_phrases), 1), 1.0)
+  end
+
+  defp generic_boilerplate_penalty(_entry), do: 0.0
+
+  defp entry_similarity_score(entry_a, entry_b) do
+    text_a = entry_similarity_text(entry_a)
+    text_b = entry_similarity_text(entry_b)
+
+    StorySimilarity.score(text_a, text_b)
+  end
+
+  defp entry_similarity_text(%{article: article, sources: sources}) do
+    source_titles =
+      sources
+      |> Enum.map(fn
+        %{title: title} when is_binary(title) -> title
+        _ -> nil
+      end)
+      |> Enum.reject(&is_nil/1)
+
+    [article.title, article.summary, article.body | source_titles]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.join(" ")
   end
 
   defp importance_score(entry, true, config) do
@@ -124,7 +198,7 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
         end
 
       {:ok, {:error, reason}} ->
-        if reason == :missing_openrouter_api_key do
+        if reason in [:missing_openrouter_api_key, :llm_circuit_open, :llm_rate_limited] do
           {:deterministic, deterministic_importance(entry)}
         else
           raise "llm_unavailable: #{inspect(reason)}"
@@ -169,11 +243,12 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
 
   defp deterministic_importance(entry) do
     article = entry.article
-    source_count_bonus = min(length(entry.sources) * 10, 40)
+    source_count_bonus = min(length(entry.sources) * 6, 30)
     authored_bonus = if article.author_type == "human_admin", do: 8, else: 0
     rumour_penalty = if rumour_article?(article.title), do: 10, else: 0
+    generic_penalty = round(generic_boilerplate_penalty(entry) * 35)
 
-    50 + source_count_bonus + authored_bonus - rumour_penalty
+    50 + source_count_bonus + authored_bonus - rumour_penalty - generic_penalty
   end
 
   defp rumour_article?(title) when is_binary(title),
@@ -260,118 +335,18 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     ArgumentError -> :ok
   end
 
-  defp emit_ranker_telemetry(ranked, started_at) do
+  defp emit_ranker_telemetry(ranked, scored_entries, started_at) do
     :telemetry.execute(
       [:leythers_com, :intelligence, :homepage_ranking, :stop],
       %{duration: System.monotonic_time() - started_at, count: 1},
-      %{result: :ok, article_count: length(ranked)}
+      %{
+        result: :ok,
+        article_count: length(ranked),
+        pre_dedupe_count: length(scored_entries),
+        deduped_count: 0
+      }
     )
   end
-
-  defp dedupe_ranked_entries(ranked, config) do
-    title_threshold = config[:similar_story_threshold] || 0.5
-    text_threshold = config[:similar_story_text_threshold] || 0.42
-    source_title_threshold = config[:similar_source_title_threshold] || 0.45
-
-    ranked
-    |> Enum.reduce([], fn candidate, acc ->
-      if Enum.any?(
-           acc,
-           &same_story?(&1, candidate, title_threshold, text_threshold, source_title_threshold)
-         ) do
-        acc
-      else
-        [candidate | acc]
-      end
-    end)
-    |> Enum.reverse()
-  end
-
-  defp same_story?(entry_a, entry_b, title_threshold, text_threshold, source_title_threshold) do
-    similar_titles?(entry_a, entry_b, title_threshold) or
-      similar_article_text?(entry_a, entry_b, text_threshold) or
-      similar_source_titles?(entry_a, entry_b, source_title_threshold) or
-      source_overlap?(entry_a, entry_b)
-  end
-
-  defp similar_titles?(entry_a, entry_b, threshold) do
-    StorySimilarity.similar?(entry_title(entry_a), entry_title(entry_b), threshold)
-  end
-
-  defp entry_title(%{article: %{title: title}}) when is_binary(title), do: title
-  defp entry_title(_entry), do: ""
-
-  defp similar_article_text?(entry_a, entry_b, threshold) do
-    text_a = article_similarity_text(entry_a)
-    text_b = article_similarity_text(entry_b)
-
-    if text_a == "" or text_b == "" do
-      false
-    else
-      StorySimilarity.score(text_a, text_b) >= threshold
-    end
-  end
-
-  defp article_similarity_text(%{article: article}) when is_map(article) do
-    [
-      Map.get(article, :summary) || Map.get(article, "summary"),
-      Map.get(article, :body) || Map.get(article, "body")
-    ]
-    |> Enum.filter(&is_binary/1)
-    |> Enum.join("\n")
-  end
-
-  defp article_similarity_text(_entry), do: ""
-
-  defp similar_source_titles?(entry_a, entry_b, threshold) do
-    source_titles_a = source_titles(entry_a)
-    source_titles_b = source_titles(entry_b)
-
-    Enum.any?(source_titles_a, fn title_a ->
-      Enum.any?(source_titles_b, fn title_b ->
-        StorySimilarity.similar?(title_a, title_b, threshold)
-      end)
-    end)
-  end
-
-  defp source_titles(%{sources: sources}) when is_list(sources) do
-    sources
-    |> Enum.map(fn
-      %{title: title} when is_binary(title) -> title
-      %{"title" => title} when is_binary(title) -> title
-      _ -> nil
-    end)
-    |> Enum.reject(&is_nil/1)
-  end
-
-  defp source_titles(_entry), do: []
-
-  defp source_overlap?(entry_a, entry_b) do
-    source_set_a = source_fingerprint_set(entry_a)
-    source_set_b = source_fingerprint_set(entry_b)
-
-    if MapSet.size(source_set_a) == 0 or MapSet.size(source_set_b) == 0 do
-      false
-    else
-      not MapSet.disjoint?(source_set_a, source_set_b)
-    end
-  end
-
-  defp source_fingerprint_set(%{sources: sources}) when is_list(sources) do
-    sources
-    |> Enum.map(&source_fingerprint/1)
-    |> Enum.reject(&is_nil/1)
-    |> MapSet.new()
-  end
-
-  defp source_fingerprint_set(_entry), do: MapSet.new()
-
-  defp source_fingerprint(%{} = source) do
-    source[:raw_source_id] || source["raw_source_id"] || source[:id] || source["id"] ||
-      source[:url] || source["url"] || source[:source_url] || source["source_url"]
-  end
-
-  defp source_fingerprint(source), do: source
 
   defp config do
     Application.get_env(:leythers_com, :homepage_ranking, @default_config)

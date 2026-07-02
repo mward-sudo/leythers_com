@@ -763,6 +763,8 @@ defmodule LeythersCom.Intelligence do
   end
 
   def job_operations_progress_snapshot do
+    maybe_recover_editorial_dispatch()
+
     running_jobs =
       Job
       |> job_operations_scope()
@@ -789,6 +791,37 @@ defmodule LeythersCom.Intelligence do
       queued_jobs: queued_jobs || 0,
       pending_sources: pending_sources || 0
     }
+  end
+
+  defp maybe_recover_editorial_dispatch do
+    pending_sources =
+      from(source in "raw_sources",
+        where: source.status == "pending",
+        select: count(source.id)
+      )
+      |> Repo.one()
+
+    if (pending_sources || 0) > 0 and source_editorial_jobs_in_flight?() == false do
+      _ = SourceEditorialWorker.enqueue(%{"drain_backlog" => true})
+    end
+
+    :ok
+  end
+
+  defp source_editorial_jobs_in_flight? do
+    worker_module_name = to_string(LeythersCom.Intelligence.SourceEditorialWorker)
+    worker_name = String.trim_leading(worker_module_name, "Elixir.")
+    worker_names = [worker_name, worker_module_name]
+    non_terminal_states = ["available", "scheduled", "executing", "retryable"]
+
+    count =
+      Job
+      |> where([job], job.worker in ^worker_names)
+      |> where([job], job.state in ^non_terminal_states)
+      |> select([job], count(job.id))
+      |> Repo.one()
+
+    (count || 0) > 0
   end
 
   def list_executing_jobs_as_processes do

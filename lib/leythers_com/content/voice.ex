@@ -5,7 +5,7 @@ defmodule LeythersCom.Content.Voice do
   Applies three types of transforms:
   1. Headline styling: rumour prefixes, consistent framing
   2. Summary validation: plain text enforcement, teaser-style requirements
-  3. Body styling: fan signoff, rumour notices, voice consistency
+  3. Body styling: rumour notices and HTML normalization
 
   All transforms are deterministic and require no LLM cost.
   """
@@ -91,41 +91,40 @@ defmodule LeythersCom.Content.Voice do
   defp style_title(title, false, _profile) when is_binary(title), do: String.trim(title)
 
   defp style_body(body, rumour?, profile) when is_binary(body) do
-    body = String.trim(body)
+    body =
+      body
+      |> String.trim()
+      |> normalize_html_body()
 
     rumour_notice =
       profile[:rumour_notice] || "Rumour mill warning: treat this as chatter until confirmed."
 
-    fan_signoff =
-      profile[:fan_signoff] || "Terrace verdict: proper Leythers chaos, and we love it."
+    base_body = if rumour?, do: prepend_html_paragraph(body, rumour_notice), else: body
 
-    base_body =
-      if rumour? do
-        prepend_line_unless_present(body, rumour_notice)
-      else
-        body
-      end
-
-    append_line_unless_present(base_body, fan_signoff)
+    base_body
   end
 
   defp style_body(_body, rumour?, profile) do
     style_body("", rumour?, profile)
   end
 
-  defp prepend_line_unless_present(text, line) do
-    if String.contains?(String.downcase(text), String.downcase(line)) do
+  defp normalize_html_body(""), do: "<p></p>"
+
+  defp normalize_html_body(text) do
+    if Regex.match?(~r/<[^>]+>/, text) do
       text
     else
-      line <> "\n\n" <> text
+      escaped = Phoenix.HTML.html_escape(text) |> Phoenix.HTML.safe_to_string()
+      "<p>#{escaped}</p>"
     end
   end
 
-  defp append_line_unless_present(text, line) do
+  defp prepend_html_paragraph(text, line) do
     if String.contains?(String.downcase(text), String.downcase(line)) do
       text
     else
-      text <> "\n\n" <> line
+      escaped = Phoenix.HTML.html_escape(line) |> Phoenix.HTML.safe_to_string()
+      "<p>#{escaped}</p>" <> text
     end
   end
 end
