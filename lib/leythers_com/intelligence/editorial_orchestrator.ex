@@ -34,6 +34,7 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
     ranked_entries =
       config[:source_limit]
       |> Content.list_recent_articles_with_sources()
+      |> Content.collapse_entries_to_story_fronts()
       |> HomepageRanker.rank(ranking_opts)
       |> Enum.take(config[:homepage_size])
 

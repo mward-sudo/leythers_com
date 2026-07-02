@@ -5,6 +5,7 @@ defmodule LeythersCom.ContentTest do
   alias LeythersCom.Content
   alias LeythersCom.Content.ArticleSource
   alias LeythersCom.Content.PermanentArticle
+  alias LeythersCom.Content.Story
   alias LeythersCom.Ingestion
 
   @valid_attrs %{
@@ -28,6 +29,13 @@ defmodule LeythersCom.ContentTest do
     test "returns error changeset on duplicate slug" do
       {:ok, _} = Content.create_article(@valid_attrs)
       assert {:error, %Ecto.Changeset{}} = Content.create_article(@valid_attrs)
+    end
+
+    test "assigns a story when not provided" do
+      assert {:ok, %PermanentArticle{} = article} = Content.create_article(@valid_attrs)
+      assert article.story_id
+
+      assert %Story{} = Repo.get!(Story, article.story_id)
     end
   end
 
@@ -317,6 +325,42 @@ defmodule LeythersCom.ContentTest do
     end
   end
 
+  describe "collapse_entries_to_story_fronts/1" do
+    test "returns only the newest article entry for each story" do
+      {:ok, story} =
+        %Story{}
+        |> Story.changeset(%{headline: "Leigh Leopards storyline"})
+        |> Repo.insert()
+
+      {:ok, older_article} =
+        Content.create_article(%{
+          slug: "story-front-older",
+          title: "Older headline",
+          body: "Older body",
+          story_id: story.id
+        })
+
+      {:ok, newer_article} =
+        Content.create_article(%{
+          slug: "story-front-newer",
+          title: "Newer headline",
+          body: "Newer body",
+          story_id: story.id
+        })
+
+      entries =
+        [
+          %{article: older_article, sources: []},
+          %{article: newer_article, sources: []}
+        ]
+
+      collapsed = Content.collapse_entries_to_story_fronts(entries)
+
+      assert length(collapsed) == 1
+      assert hd(collapsed).article.id == newer_article.id
+    end
+  end
+
   describe "publish_or_update_ai_article/3" do
     test "creates a new ai article with voice styling and rumour labeling" do
       source_id = create_source_id!("Leigh linked source", "https://example.com/ai-linked-source")
@@ -334,7 +378,7 @@ defmodule LeythersCom.ContentTest do
       assert article.author_type == "ai_editor"
       assert String.starts_with?(article.title, "Rumour: ")
       assert article.body =~ "Rumour mill warning"
-      assert article.body =~ "Terrace verdict"
+      refute article.body =~ "Terrace verdict"
     end
 
     test "updates recent matching ai article when change is not significant" do

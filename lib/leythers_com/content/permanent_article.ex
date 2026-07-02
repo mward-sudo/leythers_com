@@ -17,6 +17,8 @@ defmodule LeythersCom.Content.PermanentArticle do
     field :status, :string, default: "published"
     field :version, :integer, default: 1
 
+    belongs_to :story, LeythersCom.Content.Story
+
     timestamps(type: :utc_datetime_usec)
   end
 
@@ -30,12 +32,14 @@ defmodule LeythersCom.Content.PermanentArticle do
       :author_type,
       :raw_content_backup,
       :status,
-      :version
+      :version,
+      :story_id
     ])
     |> validate_required([:slug, :title, :body])
     |> validate_inclusion(:author_type, @valid_author_types)
     |> validate_inclusion(:status, @valid_statuses)
     |> validate_number(:version, greater_than_or_equal_to: 1)
     |> unique_constraint(:slug)
+    |> foreign_key_constraint(:story_id)
   end
 end

@@ -6,12 +6,17 @@ defmodule LeythersCom.Content do
   alias LeythersCom.Content.ArticleSource
   alias LeythersCom.Content.PermanentArticle
   alias LeythersCom.Content.Slug
+  alias LeythersCom.Content.Story
   alias LeythersCom.Content.Voice
   alias LeythersCom.Ingestion.RawSource
   alias LeythersCom.Intelligence.StorySimilarity
   alias LeythersCom.Repo
 
+  @ai_update_title_similarity_threshold 0.6
+
   def create_article(attrs) do
+    attrs = maybe_put_story_id(attrs)
+
     %PermanentArticle{}
     |> PermanentArticle.changeset(attrs)
     |> Repo.insert()
@@ -29,11 +34,13 @@ defmodule LeythersCom.Content do
     started_at = System.monotonic_time()
     title = fetch_attr(attrs, :title) || ""
     body = fetch_attr(attrs, :body)
+    summary = fetch_attr(attrs, :summary) || ""
     {:ok, slug} = Slug.unique_for_title(title)
     source_count = source_ids |> Enum.reject(&blank?/1) |> length()
 
     article_attrs = %{
       title: title,
+      summary: summary,
       body: body,
       slug: slug,
       author_type: "human_admin",
@@ -64,13 +71,14 @@ defmodule LeythersCom.Content do
   def publish_or_update_ai_article(attrs, source_ids \\ [], opts \\ []) when is_map(attrs) do
     started_at = System.monotonic_time()
     triage_action = Keyword.get(opts, :triage_action, nil)
+    target_article_id = Keyword.get(opts, :target_article_id, nil)
     rumour? = Keyword.get(opts, :rumour, false)
-    recency_window_hours = Keyword.get(opts, :recency_window_hours, 36)
+    recency_window_hours = Keyword.get(opts, :recency_window_hours, 72)
 
     # Support both 3-part structure (headline/summary/body) and legacy (title/body)
     headline = fetch_attr(attrs, :headline) || fetch_attr(attrs, :title) || ""
     summary = fetch_attr(attrs, :summary) || ""
-    body = fetch_attr(attrs, :body) || ""
+    body = fetch_attr(attrs, :body_html) || fetch_attr(attrs, :body) || ""
 
     source_ids = source_ids |> Enum.reject(&blank?/1) |> Enum.map(&to_string/1) |> Enum.uniq()
 
@@ -80,6 +88,7 @@ defmodule LeythersCom.Content do
         body,
         source_ids,
         triage_action,
+        target_article_id,
         recency_window_hours,
         rumour?
       )
@@ -95,7 +104,15 @@ defmodule LeythersCom.Content do
     finalized_result
   end
 
-  defp perform_article_publishing(_parts, _raw_body, [], _triage_action, _recency, _rumour) do
+  defp perform_article_publishing(
+         _parts,
+         _raw_body,
+         [],
+         _triage_action,
+         _target_article_id,
+         _recency,
+         _rumour
+       ) do
     {:error, :source_ids_required}
   end
 
@@ -104,6 +121,7 @@ defmodule LeythersCom.Content do
          raw_body,
          source_ids,
          triage_action,
+         target_article_id,
          recency_window_hours,
          rumour?
        ) do
@@ -118,6 +136,7 @@ defmodule LeythersCom.Content do
             raw_body,
             source_ids,
             triage_action,
+            target_article_id,
             recency_window_hours
           )
         end)
@@ -185,6 +204,24 @@ defmodule LeythersCom.Content do
 
     []
   end
+
+  def collapse_entries_to_story_fronts(entries) when is_list(entries) do
+    entries
+    |> Enum.group_by(fn entry ->
+      entry.article.story_id || entry.article.id
+    end)
+    |> Enum.map(fn {_story_key, story_entries} ->
+      Enum.max_by(
+        story_entries,
+        fn entry ->
+          entry.article.updated_at || entry.article.inserted_at
+        end,
+        DateTime
+      )
+    end)
+  end
+
+  def collapse_entries_to_story_fronts(_entries), do: []
 
   def list_sources_for_article(article_id) when is_binary(article_id) do
     import Ecto.Query
@@ -297,6 +334,7 @@ defmodule LeythersCom.Content do
          raw_body,
          source_ids,
          :new,
+         _target_article_id,
          _recency_window_hours
        ) do
     # Triage says create new article
@@ -308,10 +346,16 @@ defmodule LeythersCom.Content do
          raw_body,
          source_ids,
          :update,
+         target_article_id,
          recency_window_hours
        ) do
-    # Triage says update existing; look for recent match
-    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours, source_ids) do
+    # Triage says update existing; honor explicit target first, then fallback to recent match
+    case resolve_update_target(
+           target_article_id,
+           voiced_output.headline,
+           recency_window_hours,
+           source_ids
+         ) do
       nil -> create_ai_article(voiced_output, raw_body, source_ids)
       article -> update_ai_article(article, voiced_output, raw_body, source_ids)
     end
@@ -323,13 +367,35 @@ defmodule LeythersCom.Content do
          raw_body,
          source_ids,
          nil,
+         target_article_id,
          recency_window_hours
        ) do
-    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours, source_ids) do
+    case resolve_update_target(
+           target_article_id,
+           voiced_output.headline,
+           recency_window_hours,
+           source_ids
+         ) do
       nil -> create_ai_article(voiced_output, raw_body, source_ids)
       article -> update_ai_article(article, voiced_output, raw_body, source_ids)
     end
   end
+
+  defp resolve_update_target(target_article_id, headline, recency_window_hours, source_ids) do
+    case fetch_published_article(target_article_id) do
+      nil -> find_recent_matching_article(headline, recency_window_hours, source_ids)
+      article -> article
+    end
+  end
+
+  defp fetch_published_article(article_id) when is_binary(article_id) do
+    case Repo.get(PermanentArticle, article_id) do
+      %PermanentArticle{status: "published"} = article -> article
+      _other -> nil
+    end
+  end
+
+  defp fetch_published_article(_article_id), do: nil
 
   defp update_ai_article(article, voiced_output, raw_body, source_ids) do
     attrs = %{
@@ -370,14 +436,13 @@ defmodule LeythersCom.Content do
 
   defp existing_source_ids_for_article(_article_id), do: []
 
-  defp find_recent_matching_ai_article(title, recency_window_hours, source_ids) do
+  defp find_recent_matching_article(title, recency_window_hours, source_ids) do
     import Ecto.Query
 
     cutoff = DateTime.add(DateTime.utc_now(), -recency_window_hours * 3600, :second)
 
     recent_articles =
       PermanentArticle
-      |> where([article], article.author_type == "ai_editor")
       |> where([article], article.status == "published")
       |> where([article], article.updated_at >= ^cutoff)
       |> order_by([article], desc: article.updated_at)
@@ -386,7 +451,7 @@ defmodule LeythersCom.Content do
     source_id_set = MapSet.new(source_ids)
 
     Enum.find(recent_articles, fn article ->
-      StorySimilarity.similar?(article.title, title) or
+      StorySimilarity.similar?(article.title, title, @ai_update_title_similarity_threshold) or
         has_source_overlap?(article.id, source_id_set)
     end)
   end
@@ -436,6 +501,37 @@ defmodule LeythersCom.Content do
         |> Enum.into(%{}, fn {key, value} -> {to_string(key), value} end)
         |> Map.put("version", next_version)
     end
+  end
+
+  defp maybe_put_story_id(attrs) when is_map(attrs) do
+    has_story_id? = Map.has_key?(attrs, :story_id) or Map.has_key?(attrs, "story_id")
+    title = fetch_story_headline(attrs)
+
+    case {has_story_id?, blank?(title)} do
+      {true, _} ->
+        attrs
+
+      {false, true} ->
+        attrs
+
+      {false, false} ->
+        case create_story(title) do
+          {:ok, story} -> Map.put(attrs, :story_id, story.id)
+          {:error, _reason} -> attrs
+        end
+    end
+  end
+
+  defp maybe_put_story_id(attrs), do: attrs
+
+  defp fetch_story_headline(attrs) do
+    fetch_attr(attrs, :title) || fetch_attr(attrs, :headline) || ""
+  end
+
+  defp create_story(title) when is_binary(title) do
+    %Story{}
+    |> Story.changeset(%{headline: String.slice(String.trim(title), 0, 200), status: "active"})
+    |> Repo.insert()
   end
 
   defp emit_manual_publish_telemetry(result, started_at, source_count) do

@@ -118,6 +118,13 @@ config :leythers_com, :llm_rate_limit,
   limit: 2,
   max_wait_ms: 10_000
 
+config :leythers_com, :llm_retry,
+  enabled: true,
+  max_attempts: 3,
+  base_delay_ms: 200,
+  max_delay_ms: 2_000,
+  jitter_ms: 100
+
 config :leythers_com, :editorial_orchestration,
   source_limit: 20,
   homepage_size: 12,

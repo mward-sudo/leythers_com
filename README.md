@@ -45,6 +45,11 @@ Recommended environment variables:
 21. `LLM_TEMPERATURE` (default: `0.4`)
 22. `LLM_NUM_PREDICT` (default: `600`)
 23. `LLM_TIMEOUT_MS` (default: `30000`)
+24. `LLM_RETRY_ENABLED` (default: `true`)
+25. `LLM_RETRY_MAX_ATTEMPTS` (default: `3`)
+26. `LLM_RETRY_BASE_DELAY_MS` (default: `200`)
+27. `LLM_RETRY_MAX_DELAY_MS` (default: `2000`)
+28. `LLM_RETRY_JITTER_MS` (default: `100`)
 
 Notes:
 
@@ -89,6 +94,16 @@ OpenRouter setup:
 1. Set `OPENROUTER_API_KEY` in runtime environment (never commit).
 2. Set `OPENROUTER_MODEL` for your chosen model route.
 3. Optionally set `OPENROUTER_HTTP_REFERER` and `OPENROUTER_SITE_NAME` for better attribution and policy compliance.
+
+## Editorial decisioning and homepage ordering
+
+The automated editorial path now follows these rules:
+
+1. Similarity decisions are LLM-first using `LeythersCom.Intelligence.DecisionEngine`.
+2. If LLM decisioning is unavailable, deterministic fallback is used and provenance metadata is persisted.
+3. LLM requests apply per-call exponential backoff with jitter for transient failures.
+4. AI draft quality is scored with rubric dimensions (`specificity`, `novelty`, `grounding`, `overall`) and emitted in decision telemetry metadata.
+5. Homepage ordering is story-first: recent articles are collapsed to one front article per story before ranking, so duplicate updates do not crowd the page.
 
 Local env file usage:
 

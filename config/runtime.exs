@@ -213,6 +213,13 @@ if config_env() == :prod do
     limit: env_int.("LLM_RATE_LIMIT_LIMIT", 2),
     max_wait_ms: env_int.("LLM_RATE_LIMIT_MAX_WAIT_MS", 10_000)
 
+  config :leythers_com, :llm_retry,
+    enabled: env_bool.("LLM_RETRY_ENABLED", true),
+    max_attempts: env_int.("LLM_RETRY_MAX_ATTEMPTS", 3),
+    base_delay_ms: env_int.("LLM_RETRY_BASE_DELAY_MS", 200),
+    max_delay_ms: env_int.("LLM_RETRY_MAX_DELAY_MS", 2_000),
+    jitter_ms: env_int.("LLM_RETRY_JITTER_MS", 100)
+
   # The secret key base is used to sign/encrypt cookies and other secrets.
   # A default value is used in config/dev.exs and config/test.exs but you
   # want to use a different value for prod and you most likely don't want

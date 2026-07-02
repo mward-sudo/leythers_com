@@ -56,6 +56,8 @@ Failure policy:
 7. Enforce summary rule set: accurate teaser and plain text only (no links/markup).
 8. Apply fan-journalist house style in body: colloquial Leigh tone, light rugby-league humour,
    British magazine flavor, restrained recurring jokes.
+9. Score each AI draft against quality rubric dimensions (`specificity`, `novelty`, `grounding`) and
+   include aggregate quality score in editorial telemetry.
 
 ### Stage A4: Publish & Attribute
 
@@ -64,6 +66,7 @@ Failure policy:
 3. Update `raw_sources.status` to `processed`.
 4. Persist `job_effect_events` records containing source input snapshots, decision action, and
    resulting content changes.
+5. Link newly created articles to a `stories` record to support story-level homepage ordering.
 
 ### Stage A5: Recovery and Replay
 
@@ -143,3 +146,9 @@ Failure policy:
 3. Track budget state transitions: below_cap, near_cap, over_cap.
 4. Track source-link health transitions: ok, redirected, broken.
 5. Track job-effect write failures and diagnostics rendering latency.
+6. Track quality rubric dimensions and overall quality score for AI draft decisions.
+
+## Homepage Ordering
+
+1. Homepage refresh collapses recent entries to one front article per story before ranking.
+2. Ranking then applies on the collapsed story-front list to prioritize distinct stories.

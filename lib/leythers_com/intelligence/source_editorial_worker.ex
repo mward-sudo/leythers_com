@@ -18,6 +18,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Intelligence.DecisionEngine
   alias LeythersCom.Intelligence.EditorialOrchestrator
   alias LeythersCom.Intelligence.LLMClient
+  alias LeythersCom.Intelligence.QualityRubric
   alias LeythersCom.Intelligence.StorySimilarity
   alias LeythersCom.Repo
 
@@ -451,6 +452,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
        ) do
     triage_action = Map.get(attrs, :triage_action, :new)
     target_article_id = Map.get(attrs, :target_article_id)
+
+    quality_scores =
+      Map.get(attrs, :quality_scores, %{specificity: 0, novelty: 0, grounding: 0, overall: 0})
+
     decision_source = Map.get(attrs, :decision_source, "deterministic")
     decision_confidence = Map.get(attrs, :decision_confidence, 0.0)
     fallback_reason = Map.get(attrs, :fallback_reason)
@@ -488,6 +493,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
           prompt_version: prompt_version(),
           llm_cost: llm_cost_attrs,
           rumour: rumour?,
+          quality_scores: quality_scores,
           decision_source: decision_source,
           decision_confidence: decision_confidence,
           fallback_reason: fallback_reason
@@ -505,6 +511,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         prompt_version: prompt_version(),
         llm_input_tokens: llm_cost_attrs.input_tokens,
         llm_output_tokens: llm_cost_attrs.output_tokens,
+        quality_specificity: quality_scores.specificity,
+        quality_novelty: quality_scores.novelty,
+        quality_grounding: quality_scores.grounding,
+        quality_overall: quality_scores.overall,
         target_article_id: target_article_id,
         decision_source: decision_source,
         decision_confidence: decision_confidence,
@@ -551,6 +561,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               prompt_version: prompt_version(),
               llm_cost: llm_cost_attrs,
               rumour: rumour?,
+              quality_scores: quality_scores,
               decision_source: decision_source,
               decision_confidence: decision_confidence,
               fallback_reason: fallback_reason
@@ -568,6 +579,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             prompt_version: prompt_version(),
             llm_input_tokens: llm_cost_attrs.input_tokens,
             llm_output_tokens: llm_cost_attrs.output_tokens,
+            quality_specificity: quality_scores.specificity,
+            quality_novelty: quality_scores.novelty,
+            quality_grounding: quality_scores.grounding,
+            quality_overall: quality_scores.overall,
             target_article_id: target_article_id,
             decision_source: decision_source,
             decision_confidence: decision_confidence,
@@ -604,6 +619,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
               prompt_version: prompt_version(),
               llm_cost: llm_cost_attrs,
               rumour: rumour?,
+              quality_scores: quality_scores,
               decision_source: decision_source,
               decision_confidence: decision_confidence,
               fallback_reason: fallback_reason
@@ -621,6 +637,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             prompt_version: prompt_version(),
             llm_input_tokens: llm_cost_attrs.input_tokens,
             llm_output_tokens: llm_cost_attrs.output_tokens,
+            quality_specificity: quality_scores.specificity,
+            quality_novelty: quality_scores.novelty,
+            quality_grounding: quality_scores.grounding,
+            quality_overall: quality_scores.overall,
             target_article_id: target_article_id,
             decision_source: decision_source,
             decision_confidence: decision_confidence,
@@ -905,6 +925,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         case validate_draft_quality(attrs, source_headlines) do
           :ok ->
             final_attrs = reconcile_similarity_action(attrs, context)
+            final_attrs = Map.put(final_attrs, :quality_scores, QualityRubric.score(final_attrs))
             llm_cost_attrs = record_llm_cost(prompt, text)
             {:ok, final_attrs, llm_cost_attrs}
 

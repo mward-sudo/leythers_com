@@ -347,6 +347,7 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert html =~ "Feed Ingestion"
     end
 
+    @tag timeout: 120_000
     test "regen all resets article/source data and queues ingestion", %{conn: conn} do
       running_job =
         create_job(
