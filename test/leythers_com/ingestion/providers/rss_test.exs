@@ -46,4 +46,26 @@ defmodule LeythersCom.Ingestion.Providers.RssTest do
     assert item["origin_provider"] == "atom_feed"
     assert %DateTime{} = item["external_published_at"]
   end
+
+  test "parse_items/3 prefers external publisher href for Google News links" do
+    feed = """
+    <rss version=\"2.0\">
+      <channel>
+        <item>
+          <title>Leigh transfer latest</title>
+          <link>https://news.google.com/rss/articles/abc123?oc=5</link>
+          <description><![CDATA[
+            <a href=\"https://news.google.com/rss/articles/abc123?oc=5\">Google</a>
+            <a href=\"https://www.loverugbyleague.com/post/leigh-transfer-latest\">Publisher</a>
+          ]]></description>
+          <pubDate>Mon, 29 Jun 2026 12:00:00 GMT</pubDate>
+        </item>
+      </channel>
+    </rss>
+    """
+
+    [item] = Rss.parse_items(feed, "google_news_leigh_leopards")
+
+    assert item["url"] == "https://www.loverugbyleague.com/post/leigh-transfer-latest"
+  end
 end

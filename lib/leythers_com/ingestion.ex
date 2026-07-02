@@ -4,11 +4,13 @@ defmodule LeythersCom.Ingestion do
   """
 
   import Ecto.Query
+  require Logger
 
   alias LeythersCom.Content.ArticleSource
   alias LeythersCom.Content.PermanentArticle
   alias LeythersCom.Ingestion.ArticleContentFetcher
   alias LeythersCom.Ingestion.FetchRssFeedWorker
+  alias LeythersCom.Ingestion.FetchSourceContentWorker
   alias LeythersCom.Ingestion.HttpClient.Req
   alias LeythersCom.Ingestion.Providers.Basic
   alias LeythersCom.Ingestion.Providers.Rss
@@ -361,9 +363,17 @@ defmodule LeythersCom.Ingestion do
   end
 
   defp spawn_content_fetcher([_first | _rest] = source_ids) do
-    Task.start_link(fn ->
-      Enum.each(source_ids, &fetch_and_store_content/1)
-    end)
+    started_at = System.monotonic_time()
+
+    summary =
+      source_ids
+      |> Enum.map(&FetchSourceContentWorker.enqueue/1)
+      |> Enum.reduce(%{enqueued_jobs: 0, failed_enqueue: 0}, fn
+        {:ok, _job}, acc -> Map.update!(acc, :enqueued_jobs, &(&1 + 1))
+        _other, acc -> Map.update!(acc, :failed_enqueue, &(&1 + 1))
+      end)
+
+    log_content_fetch_batch(source_ids, summary, started_at)
   end
 
   defp spawn_content_fetcher(_source_ids), do: :ok
@@ -374,30 +384,94 @@ defmodule LeythersCom.Ingestion do
          |> Repo.update() do
       {:ok, _updated_source} ->
         _ = SourceEditorialWorker.enqueue(%{"drain_backlog" => true})
-        :ok
+        :updated_content
 
-      _ ->
-        :ok
+      {:error, changeset} ->
+        Logger.warning(
+          "content_fetch_update_failed source_id=#{source.id} step=persist_content errors=#{inspect(changeset.errors)}"
+        )
+
+        :mutation_failed
+
+      _other ->
+        :ignored_unavailable
     end
   end
 
-  defp fetch_and_store_content(source_id) do
+  defp mark_source_content_unavailable(source) do
+    case source
+         |> RawSource.changeset(%{
+           status: "ignored",
+           last_checked_at: DateTime.utc_now(),
+           last_check_status: "broken"
+         })
+         |> Repo.update() do
+      {:ok, _updated_source} ->
+        :ignored_unavailable
+
+      {:error, changeset} ->
+        Logger.warning(
+          "content_fetch_update_failed source_id=#{source.id} step=mark_unavailable errors=#{inspect(changeset.errors)}"
+        )
+
+        :mutation_failed
+
+      _other ->
+        :mutation_failed
+    end
+  end
+
+  def fetch_and_store_content(source_id) when is_binary(source_id) do
     case Repo.get(RawSource, source_id) do
       nil ->
-        :ok
+        :source_missing
 
       source ->
-        case ArticleContentFetcher.fetch_and_extract(source.url) do
-          {:ok, content} ->
-            persist_fetched_content(source, content)
-
-          {:error, _reason} ->
-            # Log but don't fail - body_summary is sufficient fallback
-            :ok
-        end
+        handle_source_content_fetch(source)
     end
   rescue
-    _ -> :ok
+    exception ->
+      Logger.warning(
+        "content_fetch_exception source_id=#{source_id} reason=#{inspect(exception)}"
+      )
+
+      :mutation_failed
+  end
+
+  defp log_content_fetch_batch(source_ids, summary, started_at) do
+    source_count = length(source_ids)
+
+    :telemetry.execute(
+      [:leythers_com, :ingestion, :content_fetch, :batch, :stop],
+      %{duration: System.monotonic_time() - started_at, count: source_count},
+      Map.merge(summary, %{source_count: source_count})
+    )
+
+    Logger.info(
+      "content_fetch_enqueue_batch sources=#{source_count} enqueued=#{summary.enqueued_jobs} " <>
+        "enqueue_failed=#{summary.failed_enqueue}"
+    )
+  end
+
+  defp handle_source_content_fetch(source) do
+    case ArticleContentFetcher.fetch_and_extract(source.url) do
+      {:ok, content} when is_binary(content) ->
+        persist_or_ignore_fetched_content(source, content)
+
+      {:ok, _content} ->
+        mark_source_content_unavailable(source)
+
+      {:error, _reason} ->
+        mark_source_content_unavailable(source)
+    end
+  end
+
+  defp persist_or_ignore_fetched_content(source, content) do
+    if String.trim(content) == "" do
+      mark_source_content_unavailable(source)
+    else
+      persist_fetched_content(source, content)
+    end
   end
 
   defp emit_feed_ingestion_telemetry(result, started_at, origin_provider, feed_url) do

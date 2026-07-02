@@ -37,6 +37,51 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     end
   end
 
+  test "skips cluster processing when source is no longer pending" do
+    Application.put_env(:leythers_com, :llm,
+      adapter: SuccessfulDraftAdapter,
+      model: "successful"
+    )
+
+    Application.put_env(:leythers_com, :intelligence_generation,
+      auto_generation_enabled: true,
+      source_batch_size: 20,
+      max_batches_per_run: 20,
+      source_editorial_enqueue_unique_seconds: 3600,
+      source_editorial_worker_timeout_ms: 600_000,
+      significance_threshold: 70,
+      prompt_version: "source_editorial_test",
+      llm_draft_enabled: true,
+      llm_grouping_enabled: false,
+      llm_grouping_min_jaccard: 0.0,
+      grouping_llm_timeout_ms: 10,
+      llm_cost_per_1k_tokens_gbp: "0.000000"
+    )
+
+    {:ok, source} =
+      Ingestion.create_raw_source(%{
+        title: "Leigh stale cluster source",
+        url: "https://example.com/stale-cluster-source",
+        content: "Leigh source content contract body for stale cluster",
+        body_summary: "Source summary for stale cluster",
+        origin_provider: "test_feed",
+        external_published_at: ~U[2026-06-29 10:00:00.000000Z]
+      })
+
+    _ = source |> RawSource.changeset(%{status: "processed"}) |> Repo.update!()
+
+    args = %{
+      "task" => "cluster",
+      "process_run_id" => Ecto.UUID.generate(),
+      "source_ids" => [source.id]
+    }
+
+    assert :ok = SourceEditorialWorker.perform(%Oban.Job{args: args})
+
+    ai_articles = Content.list_articles() |> Enum.filter(&(&1.author_type == "ai_editor"))
+    assert ai_articles == []
+  end
+
   defmodule PromptContractDraftAdapter do
     @moduledoc false
     @behaviour LeythersCom.Intelligence.LLMClient
@@ -270,7 +315,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert source.title =~ "unavailable"
   end
 
-  test "rejects llm draft responses missing headline instead of publishing placeholder headline" do
+  test "marks source ignored when llm draft response is missing required sections" do
     Application.put_env(:leythers_com, :llm,
       adapter: MissingHeadlineDraftAdapter,
       model: "missing-headline"
@@ -307,7 +352,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert ai_articles == []
 
     source_after = Repo.get!(RawSource, source.id)
-    assert source_after.status == "pending"
+    assert source_after.status == "ignored"
   end
 
   test "passes source headline and full content into llm prompt" do

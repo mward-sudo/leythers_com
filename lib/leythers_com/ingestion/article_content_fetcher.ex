@@ -26,9 +26,10 @@ defmodule LeythersCom.Ingestion.ArticleContentFetcher do
 
   defp fetch_url(url) do
     case Req.get(url,
-           timeout: @timeout_ms,
+           connect_options: [timeout: @timeout_ms],
+           receive_timeout: @timeout_ms,
            headers: [{"user-agent", @user_agent}],
-           follow_redirects: true,
+           redirect: true,
            max_redirects: 5
          ) do
       {:ok, response} ->
@@ -46,11 +47,11 @@ defmodule LeythersCom.Ingestion.ArticleContentFetcher do
   end
 
   defp validate_content_type(response) do
-    case response.headers["content-type"] do
-      nil ->
+    case Req.Response.get_header(response, "content-type") do
+      [] ->
         :ok
 
-      content_type when is_binary(content_type) ->
+      [content_type | _rest] when is_binary(content_type) ->
         normalized = String.downcase(content_type)
 
         if String.contains?(normalized, ["text/html", "application/xhtml"]) do

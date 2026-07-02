@@ -32,7 +32,17 @@ defmodule LeythersCom.Ingestion.Providers.Rss do
 
   defp entry_to_attrs(entry_body, origin_provider, fallback_url) do
     title = extract_tag_text(entry_body, "title")
-    url = extract_url(entry_body) || fallback_url
+
+    raw_summary =
+      extract_tag_raw(entry_body, "description") ||
+        extract_tag_raw(entry_body, "summary") ||
+        extract_tag_raw(entry_body, "content")
+
+    url =
+      entry_body
+      |> extract_url()
+      |> maybe_replace_google_news_url(raw_summary)
+      |> Kernel.||(fallback_url)
 
     if blank?(title) or blank?(url) do
       nil
@@ -62,6 +72,41 @@ defmodule LeythersCom.Ingestion.Providers.Rss do
     extract_tag_text(entry_body, "link") || extract_atom_link_href(entry_body)
   end
 
+  defp maybe_replace_google_news_url(nil, _raw_summary), do: nil
+
+  defp maybe_replace_google_news_url(url, raw_summary) do
+    if google_news_url?(url) do
+      extract_external_href(raw_summary) || url
+    else
+      url
+    end
+  end
+
+  defp google_news_url?(url) when is_binary(url) do
+    case URI.parse(url) do
+      %URI{host: host} when is_binary(host) -> String.contains?(host, "news.google.com")
+      _ -> false
+    end
+  end
+
+  defp google_news_url?(_url), do: false
+
+  defp extract_external_href(raw_summary) when is_binary(raw_summary) do
+    Regex.scan(~r/href=["']([^"']+)["']/i, raw_summary)
+    |> Enum.map(fn [_, href] -> String.replace(href, "&amp;", "&") end)
+    |> Enum.find(fn href ->
+      case URI.parse(href) do
+        %URI{scheme: scheme, host: host} when scheme in ["http", "https"] and is_binary(host) ->
+          not String.contains?(host, "news.google.com")
+
+        _ ->
+          false
+      end
+    end)
+  end
+
+  defp extract_external_href(_raw_summary), do: nil
+
   defp extract_atom_link_href(entry_body) do
     case Regex.run(~r/<link\b[^>]*href=["']([^"']+)["'][^>]*\/?>(?:<\/link>)?/i, entry_body) do
       [_, href] -> String.trim(href)
@@ -74,6 +119,15 @@ defmodule LeythersCom.Ingestion.Providers.Rss do
 
     case Regex.run(regex, entry_body) do
       [_, content] -> content |> strip_cdata() |> strip_html() |> normalize_text()
+      _ -> nil
+    end
+  end
+
+  defp extract_tag_raw(entry_body, tag_name) do
+    regex = ~r/<#{tag_name}\b[^>]*>(.*?)<\/#{tag_name}>/mis
+
+    case Regex.run(regex, entry_body) do
+      [_, content] -> content |> strip_cdata() |> String.trim()
       _ -> nil
     end
   end

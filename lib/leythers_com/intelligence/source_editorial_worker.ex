@@ -42,8 +42,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       unique: [
         fields: [:worker, :args],
         period: enqueue_unique_seconds(),
-        # Keep scheduled dispatch continuations from blocking immediate catch-up dispatches.
-        states: [:available, :executing]
+        # Keep only one canonical dispatch job active across available/scheduled/executing states.
+        states: [:available, :scheduled, :executing, :retryable]
       ]
     )
     |> Oban.insert()
@@ -176,19 +176,23 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     if length(pending_sources) < source_limit do
       :ok
     else
-      enqueue_dispatch_continuation(source_limit, max_batches - 1)
+      _max_batches_left = max_batches - 1
+      enqueue_dispatch_continuation()
     end
   end
 
-  defp enqueue_dispatch_continuation(source_limit, max_batches_left) do
+  defp enqueue_dispatch_continuation do
     delay_seconds = div(dispatch_delay_ms(), 1_000) |> max(1)
 
-    %{
-      "source_limit" => source_limit,
-      "max_batches" => max_batches_left,
-      "drain_backlog" => true
-    }
-    |> new(schedule_in: delay_seconds)
+    %{"task" => "dispatch"}
+    |> new(
+      schedule_in: delay_seconds,
+      unique: [
+        fields: [:worker, :args],
+        period: enqueue_unique_seconds(),
+        states: [:available, :scheduled, :executing, :retryable]
+      ]
+    )
     |> Oban.insert()
 
     :ok
@@ -216,6 +220,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp fetch_sources_by_ids(source_ids) when is_list(source_ids) do
     RawSource
     |> where([source], source.id in ^source_ids)
+    |> where([source], source.status == "pending")
     |> order_by([source], asc: source.external_published_at, asc: source.inserted_at)
     |> Repo.all()
   end
@@ -267,6 +272,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
         {:error, :no_relevant_sources} ->
           handle_irrelevant_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot)
+
+        {:error, :invalid_llm_draft_response} ->
+          handle_invalid_draft_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot)
 
         {:error, reason} ->
           {:error, {:llm_unavailable, reason}}
@@ -489,6 +497,40 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     })
 
     {:ok, 0}
+  end
+
+  defp handle_invalid_draft_cluster(job, source_ids, run_id, decision_attrs, cluster_snapshot) do
+    summary = "sources #{length(source_ids)} skipped due to invalid llm draft response"
+
+    llm_cost_attrs = zero_cost_attrs()
+
+    persist_decision(
+      decision_attrs,
+      "skipped_invalid_draft",
+      nil,
+      summary,
+      llm_cost_attrs
+    )
+
+    persist_job_effect_event(job, %{
+      decision_action: "skipped_invalid_draft",
+      permanent_article_id: nil,
+      process_run_id: run_id,
+      source_ids: source_ids,
+      source_input_snapshot: cluster_snapshot,
+      change_summary: summary,
+      change_details: %{
+        source_count: length(source_ids),
+        run_id: run_id,
+        prompt_version: prompt_version(),
+        llm_cost: llm_cost_attrs,
+        reason: "invalid_llm_draft_response"
+      },
+      error_summary: nil
+    })
+
+    ignored_count = mark_sources_ignored(source_ids)
+    {:ok, ignored_count}
   end
 
   defp build_article_attrs(cluster_sources) do
