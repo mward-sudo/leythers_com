@@ -17,6 +17,11 @@ defmodule LeythersCom.Intelligence.LLMClient do
   @default_rate_limit_scale_ms 1_000
   @default_rate_limit_limit 2
   @default_rate_limit_max_wait_ms 10_000
+  @default_retry_enabled true
+  @default_retry_max_attempts 3
+  @default_retry_base_delay_ms 200
+  @default_retry_max_delay_ms 2_000
+  @default_retry_jitter_ms 100
 
   @callback generate(String.t(), keyword()) :: result()
 
@@ -39,10 +44,80 @@ defmodule LeythersCom.Intelligence.LLMClient do
   defp do_generate(prompt, opts) do
     config = Keyword.get(opts, :llm_config, llm_config())
     adapter = config[:adapter] || Ollama
-    result = adapter.generate(prompt, Keyword.merge(config, Keyword.delete(opts, :llm_config)))
+    adapter_opts = Keyword.merge(config, Keyword.delete(opts, :llm_config))
 
+    retry_config = retry_config(opts)
+
+    if Keyword.get(retry_config, :enabled, @default_retry_enabled) do
+      generate_with_retries(adapter, prompt, adapter_opts, retry_config)
+    else
+      result = adapter.generate(prompt, adapter_opts)
+      report_result(result)
+      result
+    end
+  end
+
+  defp generate_with_retries(adapter, prompt, adapter_opts, retry_config) do
+    max_attempts = max(Keyword.get(retry_config, :max_attempts, @default_retry_max_attempts), 1)
+
+    base_delay_ms =
+      max(Keyword.get(retry_config, :base_delay_ms, @default_retry_base_delay_ms), 1)
+
+    max_delay_ms = max(Keyword.get(retry_config, :max_delay_ms, @default_retry_max_delay_ms), 1)
+    jitter_ms = max(Keyword.get(retry_config, :jitter_ms, @default_retry_jitter_ms), 0)
+
+    do_generate_with_retries(
+      adapter,
+      prompt,
+      adapter_opts,
+      max_attempts,
+      1,
+      base_delay_ms,
+      max_delay_ms,
+      jitter_ms
+    )
+  end
+
+  defp do_generate_with_retries(
+         adapter,
+         prompt,
+         adapter_opts,
+         max_attempts,
+         attempt,
+         base_delay_ms,
+         max_delay_ms,
+         jitter_ms
+       ) do
+    result = adapter.generate(prompt, adapter_opts)
     report_result(result)
-    result
+
+    if retryable_result?(result) and attempt < max_attempts do
+      Process.sleep(backoff_delay_ms(attempt, base_delay_ms, max_delay_ms, jitter_ms))
+
+      do_generate_with_retries(
+        adapter,
+        prompt,
+        adapter_opts,
+        max_attempts,
+        attempt + 1,
+        base_delay_ms,
+        max_delay_ms,
+        jitter_ms
+      )
+    else
+      result
+    end
+  end
+
+  defp retryable_result?({:error, reason}), do: transient_failure?(reason)
+  defp retryable_result?(_result), do: false
+
+  defp backoff_delay_ms(attempt, base_delay_ms, max_delay_ms, jitter_ms) do
+    raw_delay = base_delay_ms * trunc(:math.pow(2, attempt - 1))
+    bounded_delay = min(raw_delay, max_delay_ms)
+    jitter = if jitter_ms == 0, do: 0, else: :rand.uniform(jitter_ms) - 1
+
+    bounded_delay + jitter
   end
 
   defp report_result({:ok, _payload}) do
@@ -115,6 +190,12 @@ defmodule LeythersCom.Intelligence.LLMClient do
   defp rate_limit_config(opts) do
     app_config = Application.get_env(:leythers_com, :llm_rate_limit, [])
     per_call_override = Keyword.get(opts, :rate_limit, [])
+    Keyword.merge(app_config, per_call_override)
+  end
+
+  defp retry_config(opts) do
+    app_config = Application.get_env(:leythers_com, :llm_retry, [])
+    per_call_override = Keyword.get(opts, :retry, [])
     Keyword.merge(app_config, per_call_override)
   end
 end

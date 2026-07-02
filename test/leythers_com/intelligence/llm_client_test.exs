@@ -28,6 +28,22 @@ defmodule LeythersCom.Intelligence.LLMClientTest do
     end
   end
 
+  defmodule FlakyAdapter do
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(_prompt, _opts) do
+      attempts = Process.get(:flaky_attempts, 0) + 1
+      Process.put(:flaky_attempts, attempts)
+
+      if attempts < 3 do
+        {:error, {:request_failed, 500, %{"error" => "transient"}}}
+      else
+        {:ok, %{text: "recovered", model: "flaky"}}
+      end
+    end
+  end
+
   test "uses configured adapter and merges config with opts" do
     original = Application.get_env(:leythers_com, :llm)
 
@@ -69,9 +85,13 @@ defmodule LeythersCom.Intelligence.LLMClientTest do
     Application.put_env(:leythers_com, :llm, adapter: FailingAdapter)
     Application.put_env(:leythers_com, :llm_guard, failure_threshold: 2, open_cooldown_ms: 60_000)
 
-    assert {:error, {:request_failed, 500, _}} = LLMClient.generate("one")
-    assert {:error, {:request_failed, 500, _}} = LLMClient.generate("two")
-    assert {:error, :llm_circuit_open} = LLMClient.generate("three")
+    assert {:error, {:request_failed, 500, _}} =
+             LLMClient.generate("one", retry: [enabled: false])
+
+    assert {:error, {:request_failed, 500, _}} =
+             LLMClient.generate("two", retry: [enabled: false])
+
+    assert {:error, :llm_circuit_open} = LLMClient.generate("three", retry: [enabled: false])
   end
 
   test "returns rate limited when requests exceed limit and max wait is zero" do
@@ -115,6 +135,61 @@ defmodule LeythersCom.Intelligence.LLMClientTest do
                  scale_ms: 60_000,
                  limit: 1,
                  max_wait_ms: 0
+               ]
+             )
+  end
+
+  test "retries transient failures and succeeds within retry budget" do
+    llm_original = Application.get_env(:leythers_com, :llm)
+
+    on_exit(fn ->
+      if llm_original do
+        Application.put_env(:leythers_com, :llm, llm_original)
+      else
+        Application.delete_env(:leythers_com, :llm)
+      end
+
+      Process.delete(:flaky_attempts)
+    end)
+
+    Process.put(:flaky_attempts, 0)
+    Application.put_env(:leythers_com, :llm, adapter: FlakyAdapter)
+
+    assert {:ok, %{text: "recovered", model: "flaky"}} =
+             LLMClient.generate("retry me",
+               retry: [
+                 enabled: true,
+                 max_attempts: 3,
+                 base_delay_ms: 1,
+                 max_delay_ms: 4,
+                 jitter_ms: 0
+               ]
+             )
+
+    assert Process.get(:flaky_attempts) == 3
+  end
+
+  test "returns last transient error when retry budget is exhausted" do
+    llm_original = Application.get_env(:leythers_com, :llm)
+
+    on_exit(fn ->
+      if llm_original do
+        Application.put_env(:leythers_com, :llm, llm_original)
+      else
+        Application.delete_env(:leythers_com, :llm)
+      end
+    end)
+
+    Application.put_env(:leythers_com, :llm, adapter: FailingAdapter)
+
+    assert {:error, {:request_failed, 500, %{"error" => "upstream"}}} =
+             LLMClient.generate("still broken",
+               retry: [
+                 enabled: true,
+                 max_attempts: 2,
+                 base_delay_ms: 1,
+                 max_delay_ms: 2,
+                 jitter_ms: 0
                ]
              )
   end
