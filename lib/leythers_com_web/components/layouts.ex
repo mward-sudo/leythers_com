@@ -54,6 +54,7 @@ defmodule LeythersComWeb.Layouts do
             <%= if @current_scope do %>
               <.link navigate={~p"/admin/overview"} class="btn btn-ghost btn-sm">Overview</.link>
               <.link navigate={~p"/admin/jobs"} class="btn btn-ghost btn-sm">Jobs</.link>
+              <.link href={~p"/admin/oban"} class="btn btn-ghost btn-sm">Queue</.link>
               <.link navigate={~p"/admin/articles/new"} class="btn btn-ghost btn-sm">Publish</.link>
               <.link navigate={~p"/users/settings"} class="btn btn-ghost btn-sm">Settings</.link>
               <span class="hidden text-xs text-base-content/60 sm:inline">{@current_scope.user.email}</span>

@@ -70,6 +70,14 @@ defmodule LeythersComWeb.Router do
     post "/users/update-password", UserSessionController, :update_password
   end
 
+  # ObanWeb dashboard under authenticated admin scope for comprehensive job queue visibility
+  scope "/admin", LeythersComWeb do
+    pipe_through [:browser, :require_authenticated_user]
+
+    import Oban.Web.Router
+    oban_dashboard("/oban", oban_name: Oban)
+  end
+
   scope "/", LeythersComWeb do
     pipe_through [:browser]
 
