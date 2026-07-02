@@ -14,13 +14,26 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     @behaviour LeythersCom.Intelligence.LLMClient
 
     @impl true
-    def generate(_prompt, _opts) do
-      {:ok,
-       %{
-         text:
-           "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
-         model: "fake-draft"
-       }}
+    def generate(prompt, _opts) do
+      # Detect if this is a triage prompt - if so, return approval
+      if String.contains?(prompt, "Decide if a new source is relevant") or
+           String.contains?(prompt, "DECISION RULES:") do
+        # Triage response
+        {:ok,
+         %{
+           text:
+             "DECISION: new\nTARGET_ID: none\nREASONING: Source is relevant and contains new information about Leigh.",
+           model: "fake-triage"
+         }}
+      else
+        # Draft response
+        {:ok,
+         %{
+           text:
+             "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
+           model: "fake-draft"
+         }}
+      end
     end
   end
 
@@ -29,8 +42,31 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     @behaviour LeythersCom.Intelligence.LLMClient
 
     @impl true
-    def generate(_prompt, _opts) do
-      {:ok, %{text: "SAME", model: "fake-clustering"}}
+    def generate(prompt, _opts) do
+      cond do
+        # Triage prompt
+        String.contains?(prompt, "Decide if a new source is relevant") or
+            String.contains?(prompt, "DECISION RULES:") ->
+          {:ok,
+           %{
+             text:
+               "DECISION: new\nTARGET_ID: none\nREASONING: Source is relevant and contains new information about Leigh.",
+             model: "fake-triage"
+           }}
+
+        # Draft prompt
+        String.contains?(prompt, "HEADLINE:") or String.contains?(prompt, "Create an article") ->
+          {:ok,
+           %{
+             text:
+               "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
+             model: "fake-draft"
+           }}
+
+        # Clustering/similarity prompt
+        true ->
+          {:ok, %{text: "SAME", model: "fake-clustering"}}
+      end
     end
   end
 
@@ -41,6 +77,43 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     @impl true
     def generate(_prompt, _opts) do
       {:error, {:request_failed, 500, %{"error" => "upstream unavailable"}}}
+    end
+  end
+
+  defmodule FakeTriageAdapter do
+    @moduledoc false
+    @behaviour LeythersCom.Intelligence.LLMClient
+
+    @impl true
+    def generate(prompt, _opts) do
+      # Detect if this is a triage prompt or draft prompt
+      if String.contains?(prompt, "Decide if a new source is relevant") or
+           String.contains?(prompt, "DECISION: ") do
+        # Triage response: decide new vs update based on whether recent articles exist
+        # If prompt shows "RECENT PUBLISHED ARTICLES" with actual content (not "None yet"), suggest update
+        decision =
+          if String.contains?(prompt, "RECENT PUBLISHED ARTICLES") and
+               not String.contains?(prompt, "None yet") do
+            "update"
+          else
+            "new"
+          end
+
+        {:ok,
+         %{
+           text:
+             "DECISION: #{decision}\nTARGET_ID: none\nREASONING: Source is relevant and contains new information about Leigh.",
+           model: "fake-triage"
+         }}
+      else
+        # Draft response
+        {:ok,
+         %{
+           text:
+             "HEADLINE: Leigh Squad <b>Gearing</b> Up\nSUMMARY: Sources report&nbsp;training improvements.\nBODY:\nLine one discussion.\nLine two&nbsp;continues.",
+           model: "fake-draft"
+         }}
+      end
     end
   end
 
@@ -72,6 +145,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
       grouping_llm_timeout_ms: 10,
       llm_cost_per_1k_tokens_gbp: "0.000000"
     )
+
+    # Set up default triage and draft adapter for all tests
+    Application.put_env(:leythers_com, :llm, adapter: FakeTriageAdapter)
 
     :ok
   end

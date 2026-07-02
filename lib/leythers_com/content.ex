@@ -63,7 +63,7 @@ defmodule LeythersCom.Content do
 
   def publish_or_update_ai_article(attrs, source_ids \\ [], opts \\ []) when is_map(attrs) do
     started_at = System.monotonic_time()
-    significant_change? = Keyword.get(opts, :significant_change, false)
+    triage_action = Keyword.get(opts, :triage_action, nil)
     rumour? = Keyword.get(opts, :rumour, false)
     recency_window_hours = Keyword.get(opts, :recency_window_hours, 36)
 
@@ -79,7 +79,7 @@ defmodule LeythersCom.Content do
         {headline, summary, body},
         body,
         source_ids,
-        significant_change?,
+        triage_action,
         recency_window_hours,
         rumour?
       )
@@ -91,11 +91,11 @@ defmodule LeythersCom.Content do
         {:error, reason} -> {:error, reason}
       end
 
-    emit_ai_editorial_telemetry(finalized_result, started_at, rumour?, significant_change?)
+    emit_ai_editorial_telemetry(finalized_result, started_at, rumour?, triage_action == :new)
     finalized_result
   end
 
-  defp perform_article_publishing(_parts, _raw_body, [], _significant, _recency, _rumour) do
+  defp perform_article_publishing(_parts, _raw_body, [], _triage_action, _recency, _rumour) do
     {:error, :source_ids_required}
   end
 
@@ -103,7 +103,7 @@ defmodule LeythersCom.Content do
          {headline, summary, body},
          raw_body,
          source_ids,
-         significant_change?,
+         triage_action,
          recency_window_hours,
          rumour?
        ) do
@@ -117,7 +117,7 @@ defmodule LeythersCom.Content do
             voiced_output,
             raw_body,
             source_ids,
-            significant_change?,
+            triage_action,
             recency_window_hours
           )
         end)
@@ -296,20 +296,33 @@ defmodule LeythersCom.Content do
          voiced_output,
          raw_body,
          source_ids,
-         true,
-         recency_window_hours
+         :new,
+         _recency_window_hours
        ) do
-    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours, source_ids) do
-      nil -> create_ai_article(voiced_output, raw_body, source_ids)
-      article -> update_ai_article(article, voiced_output, raw_body, source_ids)
-    end
+    # Triage says create new article
+    create_ai_article(voiced_output, raw_body, source_ids)
   end
 
   defp publish_or_update_ai_decision(
          voiced_output,
          raw_body,
          source_ids,
-         false,
+         :update,
+         recency_window_hours
+       ) do
+    # Triage says update existing; look for recent match
+    case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours, source_ids) do
+      nil -> create_ai_article(voiced_output, raw_body, source_ids)
+      article -> update_ai_article(article, voiced_output, raw_body, source_ids)
+    end
+  end
+
+  # Backward compatibility: nil triage_action falls back to old logic
+  defp publish_or_update_ai_decision(
+         voiced_output,
+         raw_body,
+         source_ids,
+         nil,
          recency_window_hours
        ) do
     case find_recent_matching_ai_article(voiced_output.headline, recency_window_hours, source_ids) do
