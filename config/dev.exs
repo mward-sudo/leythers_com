@@ -125,10 +125,13 @@ config :leythers_com, Oban,
 config :leythers_com, :intelligence_generation,
   llm_grouping_enabled: false,
   grouping_llm_timeout_ms: 30_000,
-  llm_draft_timeout_ms: 7_500,
+  # Keep this above llm_rate_limit.max_wait_ms to avoid timing out while waiting
+  # for a slot before the upstream request can even start.
+  llm_draft_timeout_ms: 45_000,
   source_batch_size: 50,
   max_batches_per_run: 50,
-  source_editorial_worker_timeout_ms: 30_000,
+  # Leave room for rate-limit wait + provider response + post-processing.
+  source_editorial_worker_timeout_ms: 60_000,
   source_editorial_retry_base_seconds: 1,
   source_editorial_retry_max_seconds: 8,
   source_editorial_retry_persist_threshold: 3
