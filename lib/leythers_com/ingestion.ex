@@ -90,9 +90,13 @@ defmodule LeythersCom.Ingestion do
   end
 
   def enqueue_feed_fetch(attrs) when is_map(attrs) do
+    enqueue_feed_fetch(attrs, force: false)
+  end
+
+  def enqueue_feed_fetch(attrs, opts) when is_map(attrs) and is_list(opts) do
     attrs
     |> Basic.normalize()
-    |> FetchRssFeedWorker.new(unique: feed_enqueue_unique_opts())
+    |> FetchRssFeedWorker.new(unique: maybe_feed_unique_opts(opts))
     |> Oban.insert()
   end
 
@@ -116,7 +120,7 @@ defmodule LeythersCom.Ingestion do
 
   def reset_article_and_source_data(opts \\ []) do
     enqueue_feeds? = Keyword.get(opts, :enqueue_feeds, true)
-    enqueue_fun = Keyword.get(opts, :enqueue_fun, &enqueue_feed_fetch/1)
+    enqueue_fun = Keyword.get(opts, :enqueue_fun, &enqueue_feed_fetch_for_reset/1)
     feeds = Keyword.get(opts, :feeds, configured_feeds())
 
     with {:ok, delete_stats} <- delete_article_and_source_rows(),
@@ -165,6 +169,12 @@ defmodule LeythersCom.Ingestion do
        enqueued_feed_jobs: enqueued_feed_jobs,
        failed_feed_jobs: failed_feed_jobs
      }}
+  end
+
+  defp enqueue_feed_fetch_for_reset(attrs), do: enqueue_feed_fetch(attrs, force: true)
+
+  defp maybe_feed_unique_opts(opts) do
+    if Keyword.get(opts, :force, false), do: false, else: feed_enqueue_unique_opts()
   end
 
   def alert_on_stale_feeds(opts \\ []) do
