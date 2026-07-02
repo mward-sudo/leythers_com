@@ -35,4 +35,21 @@ defmodule LeythersCom.Intelligence.HomepageRefreshWorkerTest do
     assert HomepageRefreshWorker.backoff(%Oban.Job{attempt: 7, args: %{}}) == 8
     assert HomepageRefreshWorker.backoff(%Oban.Job{attempt: 8, args: %{}}) == 8
   end
+
+  test "uses configured worker timeout for execution guard" do
+    Application.put_env(:leythers_com, :editorial_orchestration,
+      source_limit: 20,
+      homepage_size: 12,
+      refresh_cooldown_seconds: 300,
+      refresh_task_timeout_ms: 7_500,
+      refresh_worker_timeout_ms: 5_000,
+      refresh_retry_base_seconds: 1,
+      refresh_retry_max_seconds: 8,
+      refresh_retry_persist_threshold: 3,
+      async_source_refresh: true,
+      prompt_version: "homepage_ranker_v1"
+    )
+
+    assert HomepageRefreshWorker.timeout(%Oban.Job{args: %{}}) == 5_000
+  end
 end

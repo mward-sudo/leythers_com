@@ -7,7 +7,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   processed after successful publication.
   """
 
-  use Oban.Worker, queue: :intelligence, max_attempts: 200
+  use Oban.Worker, queue: :intelligence, max_attempts: 25
 
   import Ecto.Query
 
@@ -23,7 +23,8 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_significance_threshold 70
   @default_prompt_version "source_editorial_v1"
   @default_enqueue_unique_seconds 3_600
-  @default_worker_timeout_ms :timer.minutes(10)
+  @default_worker_timeout_ms 30_000
+  @default_llm_draft_timeout_ms 7_500
   @default_dispatch_delay_ms 2_000
   @default_dispatch_delay_max_ms 15_000
   @default_retry_base_seconds 1
@@ -415,9 +416,22 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp llm_draft_attrs(cluster_sources, rumour?) do
     prompt = llm_prompt(cluster_sources, rumour?)
 
-    case LLMClient.generate(prompt) do
+    # Run LLM draft generation in a supervised task so we can fail fast and retry quickly.
+    case run_with_timeout(fn ->
+           LLMClient.generate(prompt, timeout_ms: llm_draft_timeout_ms())
+         end) do
       {:ok, %{text: text}} -> parse_and_record_draft(prompt, text)
       {:error, reason} -> {:error, reason}
+      :timeout -> {:error, :timeout}
+    end
+  end
+
+  defp run_with_timeout(fun) when is_function(fun, 0) do
+    task = Task.async(fun)
+
+    case Task.yield(task, llm_draft_timeout_ms()) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      _ -> :timeout
     end
   end
 
@@ -676,6 +690,12 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     :leythers_com
     |> Application.get_env(:intelligence_generation, [])
     |> Keyword.get(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms)
+  end
+
+  defp llm_draft_timeout_ms do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:llm_draft_timeout_ms, @default_llm_draft_timeout_ms)
   end
 
   defp dispatch_delay_ms do

@@ -3,13 +3,14 @@ defmodule LeythersCom.Intelligence.HomepageRefreshWorker do
   Oban worker that executes homepage refresh orchestration in a supervised OTP flow.
   """
 
-  use Oban.Worker, queue: :intelligence, max_attempts: 200
+  use Oban.Worker, queue: :intelligence, max_attempts: 25
 
   alias LeythersCom.Intelligence.EditorialOrchestrator
 
   @default_retry_base_seconds 1
   @default_retry_max_seconds 15
   @default_retry_persist_threshold 3
+  @default_worker_timeout_ms 7_500
 
   def enqueue(attrs \\ []) when is_list(attrs) do
     args =
@@ -25,6 +26,9 @@ defmodule LeythersCom.Intelligence.HomepageRefreshWorker do
   def perform(%Oban.Job{args: args}) do
     EditorialOrchestrator.run_source_update_refresh(args)
   end
+
+  @impl Oban.Worker
+  def timeout(%Oban.Job{} = _job), do: worker_timeout_ms()
 
   @impl Oban.Worker
   def backoff(%Oban.Job{} = job) do
@@ -60,5 +64,11 @@ defmodule LeythersCom.Intelligence.HomepageRefreshWorker do
     :leythers_com
     |> Application.get_env(:editorial_orchestration, [])
     |> Keyword.get(:refresh_retry_persist_threshold, @default_retry_persist_threshold)
+  end
+
+  defp worker_timeout_ms do
+    :leythers_com
+    |> Application.get_env(:editorial_orchestration, [])
+    |> Keyword.get(:refresh_worker_timeout_ms, @default_worker_timeout_ms)
   end
 end

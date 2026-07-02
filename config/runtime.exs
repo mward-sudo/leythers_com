@@ -120,8 +120,9 @@ if config_env() == :dev do
       _ -> :ollama
     end
 
-  dev_ingestion_default = if dev_provider == :openrouter, do: 2, else: 1
-  dev_intelligence_default = if dev_provider == :openrouter, do: 4, else: 1
+  # OpenRouter can handle materially higher parallelism; local Ollama should stay conservative.
+  dev_ingestion_default = if dev_provider == :openrouter, do: 3, else: 1
+  dev_intelligence_default = if dev_provider == :openrouter, do: 12, else: 1
 
   active_profile =
     case dev_provider do
@@ -177,7 +178,7 @@ if config_env() == :prod do
     queues: [
       default: env_int.("OBAN_QUEUE_DEFAULT", 5),
       ingestion: env_int.("OBAN_QUEUE_INGESTION", 2),
-      intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 4)
+      intelligence: env_int.("OBAN_QUEUE_INTELLIGENCE", 12)
     ]
 
   llm_provider =

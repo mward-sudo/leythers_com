@@ -115,18 +115,27 @@ config :phoenix_live_view,
 # Disable swoosh api client as it is only required for production adapters.
 config :swoosh, :api_client, false
 
+# Reclaim stale executing jobs quickly in development so timed-out work
+# doesn't appear hung for long in Oban Web.
+config :leythers_com, Oban,
+  plugins: [Oban.Plugins.Pruner, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(2)}]
+
 # Keep editorial processing practical in development: avoid extra LLM grouping
 # calls and keep each worker run bounded for faster visible progress.
 config :leythers_com, :intelligence_generation,
   llm_grouping_enabled: false,
   grouping_llm_timeout_ms: 30_000,
+  llm_draft_timeout_ms: 7_500,
   source_batch_size: 50,
   max_batches_per_run: 50,
+  source_editorial_worker_timeout_ms: 30_000,
   source_editorial_retry_base_seconds: 1,
   source_editorial_retry_max_seconds: 8,
   source_editorial_retry_persist_threshold: 3
 
 config :leythers_com, :editorial_orchestration,
+  refresh_task_timeout_ms: 7_500,
+  refresh_worker_timeout_ms: 7_500,
   refresh_retry_base_seconds: 1,
   refresh_retry_max_seconds: 8,
   refresh_retry_persist_threshold: 3

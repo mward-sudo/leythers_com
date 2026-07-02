@@ -42,6 +42,7 @@ defmodule LeythersCom.Intelligence do
          {:ok, normalized_provider} <- LLMProvider.normalize_provider(provider),
          {:ok, _setting} <- upsert_dev_llm_provider_setting(normalized_provider) do
       :ok = LLMProvider.activate(normalized_provider)
+      :ok = apply_dev_provider_runtime_settings(normalized_provider)
       {:ok, normalized_provider}
     else
       :error -> {:error, :invalid_provider}
@@ -51,13 +52,12 @@ defmodule LeythersCom.Intelligence do
 
   def restore_dev_llm_provider do
     with :ok <- ensure_dev_environment(),
-         false <- dev_provider_explicitly_configured?(),
          %RuntimeSetting{value: value} <- Repo.get_by(RuntimeSetting, key: @dev_llm_provider_key),
          {:ok, provider} <- LLMProvider.normalize_provider(value) do
       :ok = LLMProvider.activate(provider)
+      :ok = apply_dev_provider_runtime_settings(provider)
       {:ok, provider}
     else
-      true -> :ok
       nil -> :ok
       :error -> {:error, :invalid_provider}
       {:error, :unsupported_environment} -> :ok
@@ -97,13 +97,6 @@ defmodule LeythersCom.Intelligence do
     end
   end
 
-  defp dev_provider_explicitly_configured? do
-    case System.get_env("DEV_LLM_PROVIDER") do
-      nil -> false
-      value -> String.trim(value) != ""
-    end
-  end
-
   defp upsert_dev_llm_provider_setting(provider) do
     now = DateTime.utc_now() |> DateTime.truncate(:microsecond)
     provider_value = Atom.to_string(provider)
@@ -119,6 +112,43 @@ defmodule LeythersCom.Intelligence do
       on_conflict: [set: [value: provider_value, updated_at: now]],
       conflict_target: :key
     )
+  end
+
+  def apply_dev_provider_runtime_settings(provider \\ nil) do
+    if Application.get_env(:leythers_com, :runtime_env, :dev) == :dev do
+      active_provider = provider || current_llm_provider()
+
+      defaults =
+        case active_provider do
+          :openrouter -> %{ingestion: 3, intelligence: 12}
+          _ -> %{ingestion: 1, intelligence: 1}
+        end
+
+      ingestion_limit = env_or_default_int("DEV_OBAN_QUEUE_INGESTION", defaults.ingestion)
+
+      intelligence_limit =
+        env_or_default_int("DEV_OBAN_QUEUE_INTELLIGENCE", defaults.intelligence)
+
+      _ = Oban.scale_queue(queue: :ingestion, limit: ingestion_limit, local_only: true)
+      _ = Oban.scale_queue(queue: :intelligence, limit: intelligence_limit, local_only: true)
+    end
+
+    :ok
+  rescue
+    _ -> :ok
+  end
+
+  defp env_or_default_int(var_name, default) do
+    case System.get_env(var_name) do
+      nil ->
+        default
+
+      value ->
+        case Integer.parse(value) do
+          {parsed, ""} when parsed > 0 -> parsed
+          _ -> default
+        end
+    end
   end
 
   defp do_upsert_ledger(changeset, date, attrs) do

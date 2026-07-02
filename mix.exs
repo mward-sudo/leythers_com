@@ -68,6 +68,7 @@ defmodule LeythersCom.MixProject do
       {:req, "~> 0.5"},
       {:hammer, "~> 6.2"},
       {:oban, "~> 2.19"},
+      {:oban_web, "~> 2.3"},
       {:quantum, "~> 3.0"},
       {:floki, ">= 0.36.0"},
       {:telemetry_metrics, "~> 1.0"},

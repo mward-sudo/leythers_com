@@ -49,6 +49,26 @@ defmodule LeythersCom.Intelligence.LLMProviderPersistenceTest do
     assert Intelligence.current_llm_provider() == :openrouter
   end
 
+  test "restore_dev_llm_provider prefers persisted preference over DEV_LLM_PROVIDER" do
+    previous_env = System.get_env("DEV_LLM_PROVIDER")
+
+    on_exit(fn ->
+      case previous_env do
+        nil -> System.delete_env("DEV_LLM_PROVIDER")
+        value -> System.put_env("DEV_LLM_PROVIDER", value)
+      end
+    end)
+
+    System.put_env("DEV_LLM_PROVIDER", "ollama")
+    Repo.insert!(%RuntimeSetting{key: "dev_llm_provider", value: "openrouter"})
+
+    Application.put_env(:leythers_com, :llm_provider, :ollama)
+    Application.put_env(:leythers_com, :llm, adapter: LeythersCom.Intelligence.LLMClient.Ollama)
+
+    assert {:ok, :openrouter} = Intelligence.restore_dev_llm_provider()
+    assert Intelligence.current_llm_provider() == :openrouter
+  end
+
   test "set_dev_llm_provider is blocked outside dev" do
     Application.put_env(:leythers_com, :runtime_env, :prod)
 

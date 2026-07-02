@@ -18,6 +18,7 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
     source_limit: 20,
     homepage_size: 12,
     refresh_cooldown_seconds: 300,
+    refresh_task_timeout_ms: 7_500,
     async_source_refresh: true,
     prompt_version: "homepage_ranker_v1"
   ]
@@ -134,16 +135,21 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
   end
 
   def run_source_update_refresh(opts \\ []) do
+    task_timeout_ms =
+      opts
+      |> normalize_opts()
+      |> Keyword.get(:refresh_task_timeout_ms, config()[:refresh_task_timeout_ms])
+
     task =
       Task.Supervisor.async_nolink(LeythersCom.TaskSupervisor, fn ->
         refresh_homepage_layout(Keyword.put(normalize_opts(opts), :triggered_by, :source_update))
       end)
 
     result =
-      case Task.yield(task, :infinity) || Task.shutdown(task, :brutal_kill) do
+      case Task.yield(task, task_timeout_ms) || Task.shutdown(task, :brutal_kill) do
         {:ok, value} -> value
         {:exit, reason} -> {:error, reason}
-        nil -> {:error, :refresh_shutdown}
+        nil -> {:error, :refresh_timeout}
       end
 
     mark_refresh_finished()
@@ -191,6 +197,7 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
         :source_limit,
         :homepage_size,
         :refresh_cooldown_seconds,
+        :refresh_task_timeout_ms,
         :prompt_version,
         :llm_enabled,
         :llm_candidate_limit,

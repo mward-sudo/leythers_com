@@ -122,6 +122,8 @@ config :leythers_com, :editorial_orchestration,
   source_limit: 20,
   homepage_size: 12,
   refresh_cooldown_seconds: 300,
+  refresh_task_timeout_ms: 7_500,
+  refresh_worker_timeout_ms: 7_500,
   refresh_retry_base_seconds: 1,
   refresh_retry_max_seconds: 15,
   refresh_retry_persist_threshold: 3,
@@ -133,7 +135,8 @@ config :leythers_com, :intelligence_generation,
   source_batch_size: 100,
   max_batches_per_run: 100,
   source_editorial_enqueue_unique_seconds: 3600,
-  source_editorial_worker_timeout_ms: 600_000,
+  source_editorial_worker_timeout_ms: 30_000,
+  llm_draft_timeout_ms: 7_500,
   source_editorial_dispatch_delay_ms: 2_000,
   source_editorial_dispatch_delay_max_ms: 15_000,
   source_editorial_retry_base_seconds: 1,
@@ -151,10 +154,16 @@ config :leythers_com, :intelligence_generation,
 config :phoenix, :json_library, Jason
 
 # Configure Oban
+# Runtime config applies provider-aware queue defaults:
+# - openrouter: high intelligence concurrency
+# - ollama: conservative local concurrency
 config :leythers_com, Oban,
   repo: LeythersCom.Repo,
   plugins: [Oban.Plugins.Pruner, {Oban.Plugins.Lifeline, rescue_after: :timer.minutes(30)}],
   queues: [default: 10, ingestion: 1, intelligence: 2]
+
+# Configure ObanWeb for enhanced job visibility
+config :oban_web, ObanWeb.Telemetry, enabled: true
 
 # Configure real web feeds for ingestion
 config :leythers_com, :ingestion_feeds, [
