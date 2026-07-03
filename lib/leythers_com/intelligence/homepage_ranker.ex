@@ -17,6 +17,7 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     recency_weight: 0.45,
     importance_weight: 0.55,
     max_age_hours: 72,
+    duplicate_story_threshold: 0.7,
     novelty_penalty_max: 14.0,
     generic_boilerplate_penalty_max: 12.0
   ]
@@ -49,9 +50,23 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
       |> Enum.sort_by(& &1.hybrid_score, :desc)
       |> apply_novelty_penalty(config)
       |> Enum.sort_by(& &1.hybrid_score, :desc)
+      |> dedupe_similar_entries(config)
 
     emit_ranker_telemetry(ranked, scored_entries, started_at)
     ranked
+  end
+
+  defp dedupe_similar_entries(entries, config) when is_list(entries) do
+    threshold = config[:duplicate_story_threshold] || 0.7
+
+    Enum.reduce(entries, [], fn candidate, accepted ->
+      duplicate? =
+        Enum.any?(accepted, fn existing ->
+          entry_similarity_score(candidate, existing) >= threshold
+        end)
+
+      if duplicate?, do: accepted, else: accepted ++ [candidate]
+    end)
   end
 
   def clear_cache! do
@@ -257,32 +272,38 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
   defp rumour_article?(_title), do: false
 
   defp recency_score(entry, now, config) do
-    timestamp = publication_timestamp(entry, now)
-    age_seconds = DateTime.diff(now, timestamp, :second)
-    age_hours = max(age_seconds / 3600, 0)
-    max_age_hours = config[:max_age_hours]
+    age_hours = recency_age_hours(entry, now)
+    max_age_hours = max(config[:max_age_hours] || 72, 1)
 
-    score = 100 * max(0.0, 1.0 - age_hours / max_age_hours)
+    score = 100.0 * :math.exp(-age_hours / max_age_hours)
     Float.round(score, 2)
   end
 
-  defp publication_timestamp(%{sources: sources, article: article}, now) do
-    publication_dates =
+  defp recency_age_hours(%{sources: sources, article: article}, now) when is_list(sources) do
+    source_ages =
       sources
       |> Enum.map(fn
-        %{external_published_at: timestamp} -> timestamp
-        _ -> nil
+        %{external_published_at: %DateTime{} = timestamp} ->
+          max(DateTime.diff(now, timestamp, :second) / 3600, 0)
+
+        _ ->
+          nil
       end)
       |> Enum.reject(&is_nil/1)
 
-    case publication_dates do
-      [] -> article.updated_at || article.inserted_at || now
-      dates -> Enum.max_by(dates, &DateTime.to_unix/1)
+    case source_ages do
+      [] ->
+        recency_age_hours(%{article: article}, now)
+
+      ages ->
+        Enum.sum(ages) / max(length(ages), 1)
     end
   end
 
-  defp publication_timestamp(%{article: article}, now),
-    do: article.updated_at || article.inserted_at || now
+  defp recency_age_hours(%{article: article}, now) do
+    timestamp = article.updated_at || article.inserted_at || now
+    max(DateTime.diff(now, timestamp, :second) / 3600, 0)
+  end
 
   defp clamp_score(score) when is_integer(score), do: score |> max(0) |> min(100)
   defp clamp_score(score) when is_float(score), do: score |> round() |> clamp_score()

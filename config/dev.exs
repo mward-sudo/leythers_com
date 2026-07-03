@@ -128,8 +128,13 @@ config :leythers_com, :intelligence_generation,
   # Keep this above llm_rate_limit.max_wait_ms to avoid timing out while waiting
   # for a slot before the upstream request can even start.
   llm_draft_timeout_ms: 45_000,
-  source_batch_size: 50,
-  max_batches_per_run: 50,
+  source_batch_size: 20,
+  max_batches_per_run: 10,
+  llm_significance_enabled: false,
+  article_similarity_update_threshold: 0.72,
+  headline_recent_similarity_threshold: 0.90,
+  min_llm_update_confidence: 0.80,
+  similar_published_articles_limit: 15,
   # Leave room for rate-limit wait + provider response + post-processing.
   source_editorial_worker_timeout_ms: 60_000,
   source_editorial_retry_base_seconds: 1,

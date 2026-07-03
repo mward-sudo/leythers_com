@@ -37,11 +37,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_retry_persist_threshold 3
   @default_full_rerank_source_limit 200
   @default_full_rerank_homepage_size 12
-  @min_article_body_chars 750
-  @min_article_body_paragraphs 4
+  @default_similar_published_articles_limit 15
+  @default_min_llm_update_confidence 0.80
+  @default_headline_recent_similarity_threshold 0.82
+  @default_article_similarity_update_threshold 0.62
+  @min_article_body_chars 1_500
+  @min_article_body_paragraphs 8
   @headline_source_similarity_threshold 0.82
-  @headline_recent_similarity_threshold 0.72
-  @article_similarity_update_threshold 0.45
 
   @generic_headline_patterns [
     "continue to impress",
@@ -303,7 +305,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         case publish_cluster(job, cluster_sources, run_id) do
           {:ok, _processed_count} -> :ok
           {:halt, :budget_blocked} -> :ok
-          {:error, reason} -> {:error, reason}
         end
     end
   end
@@ -385,7 +386,15 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
           )
 
         {:error, reason} ->
-          {:error, {:llm_unavailable, reason}}
+          handle_llm_unavailable_cluster(
+            job,
+            source_ids,
+            run_id,
+            decision_attrs,
+            cluster_snapshot,
+            started_at,
+            reason
+          )
       end
     else
       summary =
@@ -682,61 +691,6 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end)
   end
 
-  defp handle_irrelevant_cluster(
-         job,
-         source_ids,
-         run_id,
-         decision_attrs,
-         cluster_snapshot,
-         started_at
-       ) do
-    summary =
-      "sources #{length(source_ids)} skipped as irrelevant for draft (no relevant source content)"
-
-    llm_cost_attrs = zero_cost_attrs()
-
-    persist_decision(
-      decision_attrs,
-      "skipped_irrelevant",
-      nil,
-      summary,
-      llm_cost_attrs
-    )
-
-    persist_job_effect_event(job, %{
-      decision_action: "skipped_irrelevant",
-      permanent_article_id: nil,
-      process_run_id: run_id,
-      source_ids: source_ids,
-      source_input_snapshot: cluster_snapshot,
-      change_summary: summary,
-      change_details: %{
-        source_count: length(source_ids),
-        run_id: run_id,
-        prompt_version: prompt_version(),
-        llm_cost: llm_cost_attrs,
-        reason: "no_relevant_sources"
-      },
-      error_summary: nil
-    })
-
-    emit_decision_telemetry(started_at, %{
-      result: :ok,
-      decision_action: "skipped_irrelevant",
-      triage_action: "irrelevant_filter",
-      source_count: length(source_ids),
-      significance_score: nil,
-      significance_threshold: nil,
-      prompt_version: prompt_version(),
-      llm_input_tokens: 0,
-      llm_output_tokens: 0,
-      target_article_id: nil
-    })
-
-    ignored_count = mark_sources_ignored(source_ids)
-    {:ok, ignored_count}
-  end
-
   defp handle_content_not_ready_cluster(
          job,
          source_ids,
@@ -791,6 +745,61 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     {:ok, 0}
   end
 
+  defp handle_irrelevant_cluster(
+         job,
+         source_ids,
+         run_id,
+         decision_attrs,
+         cluster_snapshot,
+         started_at
+       ) do
+    summary =
+      "sources #{length(source_ids)} skipped as irrelevant for draft (no relevant source content)"
+
+    llm_cost_attrs = zero_cost_attrs()
+
+    persist_decision(
+      decision_attrs,
+      "skipped_irrelevant",
+      nil,
+      summary,
+      llm_cost_attrs
+    )
+
+    persist_job_effect_event(job, %{
+      decision_action: "skipped_irrelevant",
+      permanent_article_id: nil,
+      process_run_id: run_id,
+      source_ids: source_ids,
+      source_input_snapshot: cluster_snapshot,
+      change_summary: summary,
+      change_details: %{
+        source_count: length(source_ids),
+        run_id: run_id,
+        prompt_version: prompt_version(),
+        llm_cost: llm_cost_attrs,
+        reason: "no_relevant_sources"
+      },
+      error_summary: nil
+    })
+
+    emit_decision_telemetry(started_at, %{
+      result: :ok,
+      decision_action: "skipped_irrelevant",
+      triage_action: "skip",
+      source_count: length(source_ids),
+      significance_score: nil,
+      significance_threshold: nil,
+      prompt_version: prompt_version(),
+      llm_input_tokens: 0,
+      llm_output_tokens: 0,
+      target_article_id: nil
+    })
+
+    ignored_count = mark_sources_ignored(source_ids)
+    {:ok, ignored_count}
+  end
+
   defp handle_invalid_draft_cluster(
          job,
          source_ids,
@@ -799,20 +808,21 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
          cluster_snapshot,
          started_at
        ) do
-    summary = "sources #{length(source_ids)} skipped due to invalid llm draft response"
+    summary =
+      "sources #{length(source_ids)} skipped because llm draft response was invalid"
 
     llm_cost_attrs = zero_cost_attrs()
 
     persist_decision(
       decision_attrs,
-      "skipped_invalid_draft",
+      "skipped_validation",
       nil,
       summary,
       llm_cost_attrs
     )
 
     persist_job_effect_event(job, %{
-      decision_action: "skipped_invalid_draft",
+      decision_action: "skipped_validation",
       permanent_article_id: nil,
       process_run_id: run_id,
       source_ids: source_ids,
@@ -830,7 +840,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
     emit_decision_telemetry(started_at, %{
       result: :ok,
-      decision_action: "skipped_invalid_draft",
+      decision_action: "skipped_validation",
       triage_action: "invalid_draft",
       source_count: length(source_ids),
       significance_score: nil,
@@ -843,6 +853,62 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
     ignored_count = mark_sources_ignored(source_ids)
     {:ok, ignored_count}
+  end
+
+  defp handle_llm_unavailable_cluster(
+         job,
+         source_ids,
+         run_id,
+         decision_attrs,
+         cluster_snapshot,
+         started_at,
+         reason
+       ) do
+    summary =
+      "sources #{length(source_ids)} waiting because llm draft generation is unavailable"
+
+    llm_cost_attrs = zero_cost_attrs()
+
+    persist_decision(
+      decision_attrs,
+      "skipped_publish_error",
+      nil,
+      summary,
+      llm_cost_attrs
+    )
+
+    persist_job_effect_event(job, %{
+      decision_action: "skipped_publish_error",
+      permanent_article_id: nil,
+      process_run_id: run_id,
+      source_ids: source_ids,
+      source_input_snapshot: cluster_snapshot,
+      change_summary: summary,
+      change_details: %{
+        source_count: length(source_ids),
+        run_id: run_id,
+        prompt_version: prompt_version(),
+        llm_cost: llm_cost_attrs,
+        reason: "llm_unavailable"
+      },
+      error_summary: inspect(reason)
+    })
+
+    emit_decision_telemetry(started_at, %{
+      result: :ok,
+      decision_action: "skipped_publish_error",
+      triage_action: "llm_unavailable",
+      source_count: length(source_ids),
+      significance_score: nil,
+      significance_threshold: nil,
+      prompt_version: prompt_version(),
+      llm_input_tokens: 0,
+      llm_output_tokens: 0,
+      target_article_id: nil,
+      error: inspect(reason)
+    })
+
+    {:ok, 0}
   end
 
   defp build_article_attrs(cluster_sources) do
@@ -859,7 +925,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         {:error, :source_content_not_ready}
 
       llm_draft_enabled?() ->
-        llm_draft_attrs(cluster_sources, rumour?)
+        resolve_llm_draft_attrs(cluster_sources, rumour?, primary, summary_fallback)
 
       true ->
         {:ok,
@@ -870,6 +936,73 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
            summary: summary_fallback,
            body_html: simple_html_from_text(summary_fallback)
          }, zero_cost_attrs()}
+    end
+  end
+
+  defp resolve_llm_draft_attrs(cluster_sources, rumour?, primary, summary_fallback) do
+    case llm_draft_attrs(cluster_sources, rumour?) do
+      {:ok, _attrs, _llm_cost_attrs} = result ->
+        result
+
+      {:error, :source_content_not_ready} = error ->
+        error
+
+      {:error, :no_relevant_sources} = error ->
+        error
+
+      {:error, :invalid_llm_draft_response} = error ->
+        error
+
+      {:error, reason} ->
+        maybe_fallback_for_llm_failure(cluster_sources, primary, summary_fallback, reason)
+    end
+  end
+
+  defp maybe_fallback_for_llm_failure(cluster_sources, primary, summary_fallback, reason) do
+    if deterministic_fallback_allowed?(reason) and has_full_content_or_summary?(cluster_sources) do
+      {:ok, deterministic_fallback_attrs(primary, summary_fallback), zero_cost_attrs()}
+    else
+      {:error, reason}
+    end
+  end
+
+  defp deterministic_fallback_allowed?(:timeout), do: false
+  defp deterministic_fallback_allowed?(:llm_circuit_open), do: false
+  defp deterministic_fallback_allowed?(:llm_rate_limited), do: false
+  defp deterministic_fallback_allowed?(:missing_openrouter_api_key), do: false
+  defp deterministic_fallback_allowed?({:request_failed, _status, _body}), do: false
+  defp deterministic_fallback_allowed?(%Req.TransportError{}), do: false
+  defp deterministic_fallback_allowed?(_reason), do: true
+
+  defp deterministic_fallback_attrs(primary, summary_fallback) do
+    headline =
+      primary.title
+      |> sanitize_plain_text_strict()
+      |> String.slice(0, 100)
+
+    summary =
+      summary_fallback
+      |> sanitize_plain_text_strict()
+      |> normalize_fallback_summary()
+      |> String.slice(0, 280)
+
+    %{
+      triage_action: nil,
+      target_article_id: nil,
+      headline: headline,
+      summary: summary,
+      body_html: simple_html_from_text(summary_fallback)
+    }
+  end
+
+  defp normalize_fallback_summary(text) when is_binary(text) do
+    text
+    |> String.replace(~r/\b(reportedly|allegedly|possibly|maybe|could be|might be)\b/i, "")
+    |> String.replace(~r/\s+/, " ")
+    |> String.trim()
+    |> case do
+      "" -> "Leigh update based on verified source material, with more details to follow."
+      value -> value
     end
   end
 
@@ -962,8 +1095,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     - headline must NOT be a rewrite/copy of any source headline and must NOT include source/publisher attribution.
     - summary must be plain text.
     - article_html must be valid HTML (use semantic tags like <p>, optional <h2>, <ul>, <li>). No markdown.
-    - article_html must contain at least 4 informative paragraphs with concrete details from context; avoid filler lines.
+    - article_html must contain at least 8 informative paragraphs with concrete details from context; avoid filler lines.
     - article_html should synthesize facts from the full_text fields in the context where available, not just source headlines.
+    - Include direct quotes from sources when quoteable source text is available.
+    - Include concrete stats/facts (scores, dates, player/team numbers, appearances, margins, standings, etc.) when present in source context.
+    - Prefer named entities, match details, and attributable facts over generic commentary.
     - target_article_id should be a published article id from similar_published_articles when action is "update".
 
     JSON schema:
@@ -1237,7 +1373,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     reference_headline = List.first(cluster_sources).title || ""
     reference_text = cluster_sources |> Enum.map_join("\n", &similarity_text_for_source/1)
 
-    entries = Content.list_recent_articles_with_sources(30)
+    entries = Content.list_recent_articles_with_sources(similar_published_articles_limit())
 
     similar_entries =
       Enum.filter(entries, fn entry ->
@@ -1478,8 +1614,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
              attrs,
              entries,
              llm_enabled: llm_draft_enabled?(),
-             article_similarity_update_threshold: @article_similarity_update_threshold,
-             headline_recent_similarity_threshold: @headline_recent_similarity_threshold,
+             article_similarity_update_threshold: article_similarity_update_threshold(),
+             headline_recent_similarity_threshold: headline_recent_similarity_threshold(),
+             min_llm_update_confidence: min_llm_update_confidence(),
              llm_timeout_ms: llm_draft_timeout_ms()
            ) do
         {:ok, decision} ->
@@ -1741,6 +1878,34 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     runtime_setting(:full_rerank_homepage_size, @default_full_rerank_homepage_size)
   end
 
+  defp similar_published_articles_limit do
+    runtime_setting(
+      :similar_published_articles_limit,
+      @default_similar_published_articles_limit
+    )
+  end
+
+  defp article_similarity_update_threshold do
+    runtime_setting(
+      :article_similarity_update_threshold,
+      @default_article_similarity_update_threshold
+    )
+  end
+
+  defp headline_recent_similarity_threshold do
+    runtime_setting(
+      :headline_recent_similarity_threshold,
+      @default_headline_recent_similarity_threshold
+    )
+  end
+
+  defp min_llm_update_confidence do
+    runtime_setting(
+      :min_llm_update_confidence,
+      @default_min_llm_update_confidence
+    )
+  end
+
   defp runtime_settings do
     %{
       auto_generation_enabled: read_generation_setting(:auto_generation_enabled, true),
@@ -1788,6 +1953,23 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         read_generation_setting(:full_rerank_source_limit, @default_full_rerank_source_limit),
       full_rerank_homepage_size:
         read_generation_setting(:full_rerank_homepage_size, @default_full_rerank_homepage_size),
+      similar_published_articles_limit:
+        read_generation_setting(
+          :similar_published_articles_limit,
+          @default_similar_published_articles_limit
+        ),
+      article_similarity_update_threshold:
+        read_generation_setting(
+          :article_similarity_update_threshold,
+          @default_article_similarity_update_threshold
+        ),
+      headline_recent_similarity_threshold:
+        read_generation_setting(
+          :headline_recent_similarity_threshold,
+          @default_headline_recent_similarity_threshold
+        ),
+      min_llm_update_confidence:
+        read_generation_setting(:min_llm_update_confidence, @default_min_llm_update_confidence),
       llm_config: LLMClient.llm_config() |> Map.new()
     }
   end

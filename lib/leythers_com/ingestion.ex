@@ -407,12 +407,13 @@ defmodule LeythersCom.Ingestion do
   defp mark_source_content_unavailable(source) do
     case source
          |> RawSource.changeset(%{
-           status: "ignored",
+           status: "pending",
            last_checked_at: DateTime.utc_now(),
            last_check_status: "broken"
          })
          |> Repo.update() do
       {:ok, _updated_source} ->
+        _ = SourceEditorialWorker.enqueue(%{"drain_backlog" => true})
         :ignored_unavailable
 
       {:error, changeset} ->

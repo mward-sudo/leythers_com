@@ -30,10 +30,22 @@ defmodule LeythersCom.Intelligence.EditorialOrchestratorTest do
 
   test "refresh_homepage_layout/1 persists a decision snapshot" do
     _article =
-      insert_article_with_source("leythers-refresh-one", "https://example.com/source-one")
+      insert_article_with_source(
+        "leythers-refresh-one",
+        "https://example.com/source-one",
+        title: "Leigh Leopards Build Midfield Pressure",
+        body: "Terrace chatter says the shape looked sharper.",
+        source_title: "Source headline one"
+      )
 
     _other_article =
-      insert_article_with_source("leythers-refresh-two", "https://example.com/source-two")
+      insert_article_with_source(
+        "leythers-refresh-two",
+        "https://example.com/source-two",
+        title: "Leigh Leopards Sharpen Edge Combinations",
+        body: "Supporters noticed cleaner shifts on the right edge.",
+        source_title: "Source headline two"
+      )
 
     assert {:ok, %{run_id: run_id, decision_count: 2}} =
              EditorialOrchestrator.refresh_homepage_layout(
@@ -72,12 +84,18 @@ defmodule LeythersCom.Intelligence.EditorialOrchestratorTest do
              )
   end
 
-  defp insert_article_with_source(slug, source_url) do
-    {:ok, article} = Content.create_article(Map.put(@article_attrs, :slug, slug))
+  defp insert_article_with_source(slug, source_url, attrs) do
+    article_attrs =
+      @article_attrs
+      |> Map.put(:slug, slug)
+      |> Map.merge(Map.take(Enum.into(attrs, %{}), [:title, :body]))
+
+    {:ok, article} = Content.create_article(article_attrs)
 
     {:ok, source} =
       @source_attrs
       |> Map.put(:url, source_url)
+      |> Map.put(:title, Keyword.get(attrs, :source_title, @source_attrs.title))
       |> Ingestion.create_raw_source()
 
     {:ok, _link} =
