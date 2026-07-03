@@ -53,6 +53,7 @@ defmodule LeythersComWeb.Layouts do
           <div class="flex flex-wrap items-center justify-end gap-2">
             <%= if @current_scope do %>
               <.link navigate={~p"/admin/overview"} class="btn btn-ghost btn-sm">Overview</.link>
+              <.link navigate={~p"/admin/llm-logs"} class="btn btn-ghost btn-sm">LLM Logs</.link>
               <.link navigate={~p"/admin/jobs"} class="btn btn-ghost btn-sm">Jobs</.link>
               <.link href={~p"/admin/oban"} class="btn btn-ghost btn-sm">Queue</.link>
               <.link navigate={~p"/admin/articles/new"} class="btn btn-ghost btn-sm">Publish</.link>

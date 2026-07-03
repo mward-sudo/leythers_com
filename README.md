@@ -105,6 +105,10 @@ The automated editorial path now follows these rules:
 4. AI draft quality is scored with rubric dimensions (`specificity`, `novelty`, `grounding`, `overall`) and emitted in decision telemetry metadata.
 5. Homepage ordering is story-first: recent articles are collapsed to one front article per story before ranking, so duplicate updates do not crowd the page.
 
+Current implementation reference:
+
+1. See [spec/context/current_ingest_editorial_process.md](/Users/michael/Developer/elixir/leythers_com/spec/context/current_ingest_editorial_process.md) for the current ingest and automated editorial pipeline as it exists in code today, including worker handoffs, source-state transitions, draft validation, update-vs-new behavior, and audit surfaces.
+
 Local env file usage:
 
 1. Copy `.env.example` to `.env` for local-only secrets.

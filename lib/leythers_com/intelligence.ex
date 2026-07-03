@@ -9,6 +9,7 @@ defmodule LeythersCom.Intelligence do
   alias LeythersCom.Intelligence.CostLedger
   alias LeythersCom.Intelligence.HomepageRankingDecision
   alias LeythersCom.Intelligence.JobEffectEvent
+  alias LeythersCom.Intelligence.LLMInteractionLog
   alias LeythersCom.Intelligence.LLMProvider
   alias LeythersCom.Intelligence.RuntimeSetting
   alias LeythersCom.Intelligence.SourceEditorialWorker
@@ -227,6 +228,47 @@ defmodule LeythersCom.Intelligence do
   def create_job_effect_event(_attrs) do
     {:error, JobEffectEvent.changeset(%JobEffectEvent{}, %{})}
   end
+
+  def create_llm_interaction_log(attrs) when is_map(attrs) do
+    %LLMInteractionLog{}
+    |> LLMInteractionLog.changeset(attrs)
+    |> Repo.insert()
+  end
+
+  def create_llm_interaction_log(_attrs) do
+    {:error, LLMInteractionLog.changeset(%LLMInteractionLog{}, %{})}
+  end
+
+  def list_llm_interaction_logs(opts \\ %{}) when is_map(opts) do
+    page = positive_integer(opts[:page], 1)
+    per_page = positive_integer(opts[:per_page], 20) |> min(100)
+
+    base_query =
+      LLMInteractionLog
+      |> order_by([log], desc: log.inserted_at)
+
+    total_count = Repo.aggregate(base_query, :count, :id)
+    total_pages = if total_count == 0, do: 1, else: div(total_count + per_page - 1, per_page)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * per_page
+
+    entries =
+      base_query
+      |> limit(^per_page)
+      |> offset(^offset)
+      |> Repo.all()
+
+    %{
+      entries: entries,
+      page: current_page,
+      per_page: per_page,
+      total_count: total_count,
+      total_pages: total_pages
+    }
+  end
+
+  def get_llm_interaction_log(id) when is_binary(id), do: Repo.get(LLMInteractionLog, id)
+  def get_llm_interaction_log(_id), do: nil
 
   def recent_job_effect_events(limit \\ 50)
 

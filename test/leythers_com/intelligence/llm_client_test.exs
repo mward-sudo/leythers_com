@@ -1,6 +1,7 @@
 defmodule LeythersCom.Intelligence.LLMClientTest do
-  use ExUnit.Case, async: false
+  use LeythersCom.DataCase, async: false
 
+  alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.LLMClient
   alias LeythersCom.Intelligence.LLMGuard
 
@@ -62,6 +63,61 @@ defmodule LeythersCom.Intelligence.LLMClientTest do
 
     assert {:ok, %{text: "echo: test prompt", model: "override-model"}} =
              LLMClient.generate("test prompt", model: "override-model")
+  end
+
+  test "persists prompt, context, and response logs for successful calls" do
+    original = Application.get_env(:leythers_com, :llm)
+
+    on_exit(fn ->
+      if original do
+        Application.put_env(:leythers_com, :llm, original)
+      else
+        Application.delete_env(:leythers_com, :llm)
+      end
+    end)
+
+    Application.put_env(:leythers_com, :llm, adapter: FakeAdapter, model: "config-model")
+
+    assert {:ok, %{text: "echo: prompt body", model: "config-model"}} =
+             LLMClient.generate("prompt body",
+               log_context: %{story: %{id: "story-1", title: "Leigh update"}},
+               log_metadata: %{purpose: "test_success_logging"}
+             )
+
+    [log | _] = Intelligence.list_llm_interaction_logs(%{page: 1, per_page: 5}).entries
+
+    assert log.prompt == "prompt body"
+    assert log.status == "ok"
+    assert log.response_text == "echo: prompt body"
+    assert log.metadata["purpose"] == "test_success_logging"
+    assert log.context["story"]["title"] == "Leigh update"
+  end
+
+  test "persists error logs for failed calls" do
+    original = Application.get_env(:leythers_com, :llm)
+
+    on_exit(fn ->
+      if original do
+        Application.put_env(:leythers_com, :llm, original)
+      else
+        Application.delete_env(:leythers_com, :llm)
+      end
+    end)
+
+    Application.put_env(:leythers_com, :llm, adapter: FailingAdapter)
+
+    assert {:error, {:request_failed, 500, %{"error" => "upstream"}}} =
+             LLMClient.generate("broken prompt",
+               retry: [enabled: false],
+               log_metadata: %{purpose: "test_error_logging"}
+             )
+
+    [log | _] = Intelligence.list_llm_interaction_logs(%{page: 1, per_page: 1}).entries
+
+    assert log.prompt == "broken prompt"
+    assert log.status == "error"
+    assert log.error_summary =~ "request_failed"
+    assert log.metadata["purpose"] == "test_error_logging"
   end
 
   test "opens circuit after repeated transient failures" do

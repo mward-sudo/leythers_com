@@ -205,7 +205,24 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
     timeout_ms = config[:llm_timeout_ms]
     prompt = importance_prompt(entry)
 
-    case run_with_timeout(fn -> LLMClient.generate(prompt) end, timeout_ms) do
+    log_context = %{
+      article: %{
+        id: entry.article.id,
+        title: entry.article.title,
+        status: entry.article.status
+      },
+      sources: Enum.map(entry.sources, &source_log_context/1)
+    }
+
+    case run_with_timeout(
+           fn ->
+             LLMClient.generate(prompt,
+               log_context: log_context,
+               log_metadata: %{purpose: "homepage_importance_ranking"}
+             )
+           end,
+           timeout_ms
+         ) do
       {:ok, {:ok, %{text: text}}} ->
         case parse_importance_score(text) do
           nil -> raise "llm_unavailable: invalid_importance_response"
@@ -241,6 +258,17 @@ defmodule LeythersCom.Intelligence.HomepageRanker do
   end
 
   defp parse_importance_score(_), do: nil
+
+  defp source_log_context(%{id: id, title: title, url: url, external_published_at: published_at}) do
+    %{
+      id: id,
+      title: title,
+      url: url,
+      external_published_at: published_at
+    }
+  end
+
+  defp source_log_context(other), do: %{value: inspect(other)}
 
   defp importance_prompt(entry) do
     article = entry.article

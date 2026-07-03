@@ -1034,7 +1034,12 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     case run_with_timeout(fn ->
            LLMClient.generate(prompt,
              timeout_ms: llm_draft_timeout_ms(),
-             llm_config: llm_config
+             llm_config: llm_config,
+             log_context: context,
+             log_metadata: %{
+               purpose: "source_editorial_draft",
+               source_headlines: source_headlines
+             }
            )
          end) do
       {:ok, %{text: text}} -> parse_and_record_draft(prompt, text, source_headlines, context)
@@ -1728,7 +1733,9 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     case run_with_timeout(fn ->
            LLMClient.generate(prompt,
              timeout_ms: llm_significance_timeout_ms(),
-             llm_config: llm_config
+             llm_config: llm_config,
+             log_context: %{cluster_sources: source_snapshot(cluster_sources)},
+             log_metadata: %{purpose: "source_editorial_significance"}
            )
          end) do
       {:ok, {:ok, %{text: text}}} -> parse_numeric_score(text)

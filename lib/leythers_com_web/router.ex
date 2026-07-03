@@ -60,6 +60,7 @@ defmodule LeythersComWeb.Router do
     live_session :require_authenticated_user,
       on_mount: [{LeythersComWeb.UserAuth, :require_authenticated}] do
       live "/admin/overview", Admin.OverviewLive
+      live "/admin/llm-logs", Admin.LLMLogsLive
       live "/admin/jobs", Admin.JobOperationsLive
       live "/admin/users", Admin.UserManagementLive
       live "/users/settings", UserLive.Settings, :edit

@@ -15,7 +15,11 @@ defmodule LeythersCom.Intelligence.DecisionEngine.LLM do
       prompt = build_prompt(attrs, shortlist)
       timeout_ms = Keyword.get(opts, :llm_timeout_ms, @default_timeout_ms)
 
-      case LLMClient.generate(prompt, timeout_ms: timeout_ms) do
+      case LLMClient.generate(prompt,
+             timeout_ms: timeout_ms,
+             log_context: %{incoming_attrs: attrs, shortlist: shortlist},
+             log_metadata: %{purpose: "decision_engine_similarity"}
+           ) do
         {:ok, %{text: text}} -> parse_decision(text, shortlist)
         {:error, reason} -> {:error, reason}
       end

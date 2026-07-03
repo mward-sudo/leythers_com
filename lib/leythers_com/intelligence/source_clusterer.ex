@@ -72,7 +72,20 @@ defmodule LeythersCom.Intelligence.SourceClusterer do
   defp call_llm_for_similarity(title_a, content_a, title_b, content_b) do
     prompt = semantic_comparison_prompt(title_a, content_a, title_b, content_b)
 
-    case run_with_timeout(fn -> LLMClient.generate(prompt) end, llm_comparison_timeout_ms()) do
+    log_context = %{
+      source_a: %{title: title_a, content_excerpt: String.slice(content_a, 0, 300)},
+      source_b: %{title: title_b, content_excerpt: String.slice(content_b, 0, 300)}
+    }
+
+    case run_with_timeout(
+           fn ->
+             LLMClient.generate(prompt,
+               log_context: log_context,
+               log_metadata: %{purpose: "source_cluster_similarity"}
+             )
+           end,
+           llm_comparison_timeout_ms()
+         ) do
       {:ok, {:ok, %{text: text}}} -> parse_llm_response(text)
       {:ok, {:error, reason}} -> raise "llm_unavailable: #{inspect(reason)}"
       :timeout -> raise "llm_unavailable: timeout"

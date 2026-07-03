@@ -98,6 +98,9 @@ defmodule LeythersComWeb.Admin.OverviewLive do
           </div>
 
           <div class="flex items-center gap-2">
+            <.link navigate={~p"/admin/llm-logs"} class="btn btn-outline btn-sm">
+              Open LLM Logs
+            </.link>
             <.link navigate={~p"/admin/jobs"} class="btn btn-outline btn-sm">
               Open Job Operations
             </.link>
