@@ -1085,10 +1085,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     2) Produce the final output package for publishing.
 
     Decision rules:
-    - Similarity and update-vs-new must be decided BEFORE writing output.
+    - Similarity and update-vs-new must be decided BEFORE writing output. Leigh Leopars are the primary entity
+      of interest - do not consider an article being about Leigh Leopards as similar. The other aspects of the story
+      determine similarity. If the incoming story is about a different match, player, or event, it is not similar.
     - Use all context sections: incoming_sources, similar_raw_sources, similar_published_articles.
     - Assume readers already know Leigh Leopards; do not repeatedly explain they are a rugby league team.
-    - Prefer updating an existing published article when the incoming story is the same evolving topic.
+    - Prefer updating an existing published article when the incoming story is the same evolving topic and doesn't
+      include significant new information.
     - If any similar_published_articles item overlaps heavily in facts, entities, or match context, choose "update" and set target_article_id.
     - Create a new article when the incoming story is materially different.
     - Use only facts contained in the provided context.
