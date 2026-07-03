@@ -9,6 +9,8 @@ defmodule LeythersCom.Intelligence.DecisionEngine do
   alias LeythersCom.Intelligence.DecisionEngine.Deterministic
   alias LeythersCom.Intelligence.DecisionEngine.LLM
 
+  @default_min_llm_update_confidence 0.65
+
   @type decision :: %{
           triage_action: :new | :update,
           target_article_id: String.t() | nil,
@@ -29,7 +31,7 @@ defmodule LeythersCom.Intelligence.DecisionEngine do
     if llm_enabled? do
       case LLM.decide_similarity_action(attrs, entries, opts) do
         {:ok, decision} ->
-          {:ok, decision}
+          {:ok, enforce_update_guardrails(decision, entries, opts)}
 
         {:error, reason} ->
           {:ok,
@@ -55,4 +57,23 @@ defmodule LeythersCom.Intelligence.DecisionEngine do
   defp put_fallback_reason(decision, reason) do
     Map.put(decision, :fallback_reason, inspect(reason))
   end
+
+  defp enforce_update_guardrails(%{triage_action: :update} = decision, entries, opts) do
+    min_confidence =
+      Keyword.get(opts, :min_llm_update_confidence, @default_min_llm_update_confidence)
+
+    valid_target? =
+      Enum.any?(entries, fn entry -> Map.get(entry, :article_id) == decision.target_article_id end)
+
+    if valid_target? and decision.decision_confidence >= min_confidence do
+      decision
+    else
+      decision
+      |> Map.put(:triage_action, :new)
+      |> Map.put(:target_article_id, nil)
+      |> Map.put(:fallback_reason, "llm_update_guardrail")
+    end
+  end
+
+  defp enforce_update_guardrails(decision, _entries, _opts), do: decision
 end

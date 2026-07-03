@@ -1243,16 +1243,12 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       Enum.filter(entries, fn entry ->
         article = entry.article
 
-        StorySimilarity.similar?(article.title || "", reference_headline, 0.2) or
-          StorySimilarity.score(article_similarity_text(article), reference_text) >= 0.2 or
+        StorySimilarity.similar?(article.title || "", reference_headline, 0.45) or
+          StorySimilarity.score(article_similarity_text(article), reference_text) >= 0.35 or
           similar_source_title_overlap?(entry.sources, cluster_sources)
       end)
 
-    if similar_entries == [] do
-      entries |> Enum.take(10)
-    else
-      similar_entries |> Enum.take(10)
-    end
+    similar_entries |> Enum.take(10)
   end
 
   defp article_similarity_text(article) do
