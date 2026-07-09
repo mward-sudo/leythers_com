@@ -24,6 +24,11 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
     field :input_tokens, :integer, default: 0
     field :output_tokens, :integer, default: 0
     field :estimated_cost_gbp, :decimal, default: Decimal.new("0")
+    field :provider_input_tokens, :integer
+    field :provider_output_tokens, :integer
+    field :provider_total_tokens, :integer
+    field :provider_cost, :decimal
+    field :provider_cost_currency, :string
 
     belongs_to :permanent_article, PermanentArticle
 
@@ -47,6 +52,11 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
       :input_tokens,
       :output_tokens,
       :estimated_cost_gbp,
+      :provider_input_tokens,
+      :provider_output_tokens,
+      :provider_total_tokens,
+      :provider_cost,
+      :provider_cost_currency,
       :permanent_article_id
     ])
     |> validate_required([
@@ -73,6 +83,10 @@ defmodule LeythersCom.Intelligence.ArticleGenerationDecision do
     |> validate_number(:input_tokens, greater_than_or_equal_to: 0)
     |> validate_number(:output_tokens, greater_than_or_equal_to: 0)
     |> validate_number(:estimated_cost_gbp, greater_than_or_equal_to: 0)
+    |> validate_number(:provider_input_tokens, greater_than_or_equal_to: 0)
+    |> validate_number(:provider_output_tokens, greater_than_or_equal_to: 0)
+    |> validate_number(:provider_total_tokens, greater_than_or_equal_to: 0)
+    |> validate_number(:provider_cost, greater_than_or_equal_to: 0)
     |> foreign_key_constraint(:permanent_article_id)
   end
 

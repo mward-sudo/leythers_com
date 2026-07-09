@@ -268,7 +268,12 @@ defmodule LeythersCom.Intelligence.EditorialOrchestrator do
       decision_summary: decision_summary(entry),
       input_tokens: 0,
       output_tokens: 0,
-      estimated_cost_gbp: Decimal.new("0")
+      estimated_cost_gbp: Decimal.new("0"),
+      provider_input_tokens: nil,
+      provider_output_tokens: nil,
+      provider_total_tokens: nil,
+      provider_cost: nil,
+      provider_cost_currency: nil
     }
   end
 

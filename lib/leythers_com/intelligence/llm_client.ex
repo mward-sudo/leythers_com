@@ -6,7 +6,15 @@ defmodule LeythersCom.Intelligence.LLMClient do
   behavior. Defaults are configured for local Ollama usage.
   """
 
-  @type result :: {:ok, %{text: String.t(), model: String.t()}} | {:error, term()}
+  @type result ::
+          {:ok,
+           %{
+             required(:text) => String.t(),
+             required(:model) => String.t(),
+             optional(:usage) => map(),
+             optional(:provider_generation_id) => String.t()
+           }}
+          | {:error, term()}
 
   alias __MODULE__.Ollama
   alias LeythersCom.Intelligence
@@ -138,6 +146,7 @@ defmodule LeythersCom.Intelligence.LLMClient do
         "temperature" => normalize_log_value(adapter_opts[:temperature]),
         "num_predict" => normalize_log_value(adapter_opts[:num_predict])
       })
+      |> maybe_put_provider_usage(result)
 
     attrs = %{
       adapter: adapter_name(adapter || adapter_opts[:adapter] || Ollama),
@@ -174,6 +183,21 @@ defmodule LeythersCom.Intelligence.LLMClient do
     do: inspect(reason, pretty: true, limit: :infinity)
 
   defp normalize_error_summary(_result), do: nil
+
+  defp maybe_put_provider_usage(metadata, {:ok, payload}) when is_map(payload) do
+    usage = normalize_log_value(Map.get(payload, :usage))
+    provider_generation_id = normalize_log_value(Map.get(payload, :provider_generation_id))
+
+    metadata
+    |> maybe_put_when_present("provider_usage", usage)
+    |> maybe_put_when_present("provider_generation_id", provider_generation_id)
+  end
+
+  defp maybe_put_provider_usage(metadata, _result), do: metadata
+
+  defp maybe_put_when_present(metadata, _key, nil), do: metadata
+  defp maybe_put_when_present(metadata, _key, ""), do: metadata
+  defp maybe_put_when_present(metadata, key, value), do: Map.put(metadata, key, value)
 
   defp adapter_name(module) when is_atom(module), do: Atom.to_string(module)
   defp adapter_name(other), do: inspect(other)

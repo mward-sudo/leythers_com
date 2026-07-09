@@ -971,10 +971,10 @@ defmodule LeythersComWeb.Admin.JobOperationsLive do
 
   defp change_details_to_operation_label(%{change_details: details}) when is_map(details) do
     case details do
-      %{"prompt_version" => "source_editorial_v1"} ->
+      %{"prompt_version" => <<"source_editorial_", _::binary>>} ->
         "Generate article draft"
 
-      %{"prompt_version" => "homepage_ranker_v1"} ->
+      %{"prompt_version" => <<"homepage_ranker_", _::binary>>} ->
         "Score homepage importance"
 
       %{"prompt_version" => version} when is_binary(version) ->

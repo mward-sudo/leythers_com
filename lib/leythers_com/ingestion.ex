@@ -21,6 +21,7 @@ defmodule LeythersCom.Ingestion do
   alias LeythersCom.Repo
 
   @recent_regeneration_window_days 14
+  @enrichment_terminal_failures 3
 
   def create_raw_source(attrs) do
     attrs
@@ -386,7 +387,14 @@ defmodule LeythersCom.Ingestion do
 
   defp persist_fetched_content(source, content) do
     case source
-         |> RawSource.changeset(%{content: content})
+         |> RawSource.changeset(%{
+           content: content,
+           enrichment_status: "ready",
+           enrichment_failure_count: 0,
+           enrichment_failure_reason: nil,
+           last_checked_at: DateTime.utc_now(),
+           last_check_status: "ok"
+         })
          |> Repo.update() do
       {:ok, _updated_source} ->
         _ = SourceEditorialWorker.enqueue(%{"drain_backlog" => true})
@@ -404,16 +412,24 @@ defmodule LeythersCom.Ingestion do
     end
   end
 
-  defp mark_source_content_unavailable(source) do
+  defp mark_source_content_unavailable(source, reason) do
+    failure_count = (source.enrichment_failure_count || 0) + 1
+    terminal_failure? = failure_count >= @enrichment_terminal_failures
+
+    attrs =
+      %{
+        status: "pending",
+        enrichment_status: if(terminal_failure?, do: "failed", else: "queued"),
+        enrichment_failure_count: failure_count,
+        enrichment_failure_reason: reason,
+        last_checked_at: DateTime.utc_now(),
+        last_check_status: "broken"
+      }
+
     case source
-         |> RawSource.changeset(%{
-           status: "pending",
-           last_checked_at: DateTime.utc_now(),
-           last_check_status: "broken"
-         })
+         |> RawSource.changeset(attrs)
          |> Repo.update() do
       {:ok, _updated_source} ->
-        _ = SourceEditorialWorker.enqueue(%{"drain_backlog" => true})
         :ignored_unavailable
 
       {:error, changeset} ->
@@ -434,6 +450,7 @@ defmodule LeythersCom.Ingestion do
         :source_missing
 
       source ->
+        source = mark_source_content_in_progress(source)
         handle_source_content_fetch(source)
     end
   rescue
@@ -460,22 +477,31 @@ defmodule LeythersCom.Ingestion do
     )
   end
 
+  defp mark_source_content_in_progress(%RawSource{} = source) do
+    case source
+         |> RawSource.changeset(%{enrichment_status: "in_progress"})
+         |> Repo.update() do
+      {:ok, updated_source} -> updated_source
+      _ -> source
+    end
+  end
+
   defp handle_source_content_fetch(source) do
     case ArticleContentFetcher.fetch_and_extract(source.url) do
       {:ok, content} when is_binary(content) ->
         persist_or_ignore_fetched_content(source, content)
 
       {:ok, _content} ->
-        mark_source_content_unavailable(source)
+        mark_source_content_unavailable(source, "content_empty")
 
-      {:error, _reason} ->
-        mark_source_content_unavailable(source)
+      {:error, reason} ->
+        mark_source_content_unavailable(source, inspect(reason))
     end
   end
 
   defp persist_or_ignore_fetched_content(source, content) do
     if String.trim(content) == "" do
-      mark_source_content_unavailable(source)
+      mark_source_content_unavailable(source, "content_empty")
     else
       persist_fetched_content(source, content)
     end

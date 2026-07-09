@@ -53,6 +53,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         content: "Leigh source content contract body for stale cluster",
         body_summary: "Source summary for stale cluster",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 10:00:00.000000Z]
       })
 
@@ -218,6 +219,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         content: "Leigh source content contract body for model draft sanitization.",
         body_summary: "Clean source summary for model draft path.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 08:30:00.000000Z]
       })
 
@@ -261,6 +263,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         content: "Leigh source content contract body while upstream is unavailable.",
         body_summary: "Source summary while upstream is unavailable.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 08:45:00.000000Z]
       })
 
@@ -273,7 +276,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert source.title =~ "unavailable"
   end
 
-  test "marks source ignored when llm draft response is missing required sections" do
+  test "keeps source pending when llm draft response is missing required sections" do
     Application.put_env(:leythers_com, :llm,
       adapter: MissingHeadlineDraftAdapter,
       model: "missing-headline"
@@ -301,6 +304,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         content: "Leigh source content contract body for malformed draft response.",
         body_summary: "Source summary for malformed response.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 08:55:00.000000Z]
       })
 
@@ -310,7 +314,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
     assert ai_articles == []
 
     source_after = Repo.get!(RawSource, source.id)
-    assert source_after.status == "ignored"
+    assert source_after.status == "pending"
   end
 
   test "passes source headline and full content into llm prompt" do
@@ -341,6 +345,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         content: "Leigh source content contract body",
         body_summary: "Fallback summary should not be required here.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 09:05:00.000000Z]
       })
 
@@ -377,6 +382,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         url: "https://example.com/no-relevant-content",
         body_summary: "Leigh mention exists but no full content field is present.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 09:15:00.000000Z]
       })
 
@@ -416,6 +422,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         content: "Manchester transfer latest with no rugby league relevance.",
         body_summary: "No club relevance.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 09:25:00.000000Z]
       })
 
@@ -448,6 +455,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         content: "Manchester transfer latest with no rugby league relevance.",
         body_summary: "No club relevance.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 09:35:00.000000Z]
       })
 
@@ -514,6 +522,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         url: "https://example.com/squad-update-1",
         body_summary: "Key players return ahead of the weekend fixture.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 09:00:00.000000Z]
       })
 
@@ -523,6 +532,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         url: "https://example.com/squad-update-2",
         body_summary: "Training ground reports point to stronger bench options.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 10:00:00.000000Z]
       })
 
@@ -584,6 +594,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         body_summary:
           "<a href=\"https://example.com\">Key update</a>&nbsp;<strong>from the camp</strong>.",
         origin_provider: "test_feed",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 09:30:00.000000Z]
       })
 
@@ -604,6 +615,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/transfer-rumour-1",
                body_summary: "Talks continue with an overseas halfback.",
                origin_provider: "test_feed",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 11:00:00.000000Z]
              })
 
@@ -639,6 +651,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         url: "https://example.com/low-significance-1",
         body_summary: "Initial injury concern before the cup final.",
         origin_provider: "provider_low",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 12:00:00.000000Z]
       })
 
@@ -652,6 +665,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         url: "https://example.com/low-significance-2",
         body_summary: "Further fitness notes from the same story line.",
         origin_provider: "provider_low",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 13:00:00.000000Z]
       })
 
@@ -676,6 +690,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
         url: "https://example.com/high-significance-base",
         body_summary: "Base transfer headline for this story key.",
         origin_provider: "provider_base",
+        enrichment_status: "ready",
         external_published_at: ~U[2026-06-29 14:00:00.000000Z]
       })
 
@@ -688,6 +703,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/high-significance-1",
                body_summary: "Provider one confirms ongoing transfer movement.",
                origin_provider: "provider_one",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 15:00:00.000000Z]
              })
 
@@ -697,6 +713,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/high-significance-2",
                body_summary: "Provider two adds additional transfer context.",
                origin_provider: "provider_two",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 15:10:00.000000Z]
              })
 
@@ -706,6 +723,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/high-significance-3",
                body_summary: "Provider three contributes related transfer notes.",
                origin_provider: "provider_three",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 15:20:00.000000Z]
              })
 
@@ -722,6 +740,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/similar-group-1",
                body_summary: "Match report from provider one.",
                origin_provider: "provider_one",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 17:00:00.000000Z]
              })
 
@@ -731,6 +750,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/similar-group-2",
                body_summary: "Match report from provider two.",
                origin_provider: "provider_two",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 17:05:00.000000Z]
              })
 
@@ -756,6 +776,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/charnley-contract-hint",
                body_summary: "Provider one reports contract hint details.",
                origin_provider: "provider_one",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 19:00:00.000000Z]
              })
 
@@ -766,6 +787,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/charnley-playing-future",
                body_summary: "Provider two reports on playing future message.",
                origin_provider: "provider_two",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 19:05:00.000000Z]
              })
 
@@ -805,6 +827,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/llm-grouping-1",
                body_summary: "Provider one reports late-game drama.",
                origin_provider: "provider_one",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 18:00:00.000000Z]
              })
 
@@ -814,6 +837,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                url: "https://example.com/llm-grouping-2",
                body_summary: "Provider two covers coach reaction from same match.",
                origin_provider: "provider_two",
+               enrichment_status: "ready",
                external_published_at: ~U[2026-06-29 18:05:00.000000Z]
              })
 
@@ -851,6 +875,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorkerTest do
                  url: "https://example.com/backlog-#{suffix}",
                  body_summary: "Backlog summary for #{suffix}",
                  origin_provider: "provider_#{suffix}",
+                 enrichment_status: "ready",
                  external_published_at:
                    ~U[2026-06-29 16:00:00.000000Z] |> DateTime.add(minute * 60, :second)
                })

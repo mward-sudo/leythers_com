@@ -158,21 +158,35 @@ defmodule LeythersCom.Intelligence do
         Repo.insert!(changeset)
 
       existing ->
-        updated = %{
-          input_tokens: existing.input_tokens + (attrs[:input_tokens] || 0),
-          output_tokens: existing.output_tokens + (attrs[:output_tokens] || 0),
-          estimated_cost_gbp:
-            Decimal.add(
-              existing.estimated_cost_gbp,
-              attrs[:estimated_cost_gbp] || Decimal.new("0")
-            )
-        }
+        updated = build_updated_ledger_attrs(existing, attrs)
 
         existing
         |> CostLedger.changeset(updated)
         |> Repo.update!()
     end
   end
+
+  defp build_updated_ledger_attrs(existing, attrs) do
+    %{
+      input_tokens: existing.input_tokens + integer_attr(attrs, :input_tokens),
+      output_tokens: existing.output_tokens + integer_attr(attrs, :output_tokens),
+      provider_input_tokens:
+        existing.provider_input_tokens + integer_attr(attrs, :provider_input_tokens),
+      provider_output_tokens:
+        existing.provider_output_tokens + integer_attr(attrs, :provider_output_tokens),
+      provider_total_tokens:
+        existing.provider_total_tokens + integer_attr(attrs, :provider_total_tokens),
+      provider_cost: Decimal.add(existing.provider_cost, decimal_attr(attrs, :provider_cost)),
+      provider_cost_currency:
+        merge_provider_currency(existing.provider_cost_currency, attrs[:provider_cost_currency]),
+      estimated_cost_gbp:
+        Decimal.add(existing.estimated_cost_gbp, decimal_attr(attrs, :estimated_cost_gbp))
+    }
+  end
+
+  defp integer_attr(attrs, key), do: attrs[key] || 0
+
+  defp decimal_attr(attrs, key), do: attrs[key] || Decimal.new("0")
 
   def monthly_spend(%Date{} = date) do
     start_of_month = Date.beginning_of_month(date)
@@ -185,6 +199,14 @@ defmodule LeythersCom.Intelligence do
       |> Repo.one()
 
     result || Decimal.new("0")
+  end
+
+  defp merge_provider_currency(nil, nil), do: "credits"
+  defp merge_provider_currency(current, nil), do: current
+  defp merge_provider_currency(nil, incoming), do: incoming
+
+  defp merge_provider_currency(current, incoming) do
+    if current == incoming, do: current, else: "mixed"
   end
 
   def recent_cost_ledgers(limit \\ 14)

@@ -24,7 +24,7 @@ At a high level, the current automated pipeline is:
 3. Newly inserted sources trigger `LeythersCom.Ingestion.FetchSourceContentWorker` jobs.
 4. Content fetch stores extracted article body text back onto `raw_sources.content`.
 5. Feed ingestion and content fetch both enqueue `LeythersCom.Intelligence.SourceEditorialWorker`.
-6. `SourceEditorialWorker` dispatches one cluster job per pending source.
+6. `SourceEditorialWorker` dispatches one cluster job per resulting topic cluster.
 7. Each cluster job decides whether the source is ready, relevant, publishable, ignorable, or should remain pending.
 8. Successful editorial output creates or updates `permanent_articles` and links sources through `article_sources`.
 9. Editorial and ingest events trigger homepage reranking via `LeythersCom.Intelligence.EditorialOrchestrator`.
@@ -154,14 +154,18 @@ Current extraction behavior:
 1. If the source is missing: `:source_missing`
 2. If extraction returns non-empty content:
    - update `raw_sources.content`
+   - set `enrichment_status` to `ready`
+   - reset enrichment failure counters
    - enqueue `SourceEditorialWorker` with `drain_backlog: true`
 3. If extraction fails or content is blank:
    - set `last_checked_at`
    - set `last_check_status` to `broken`
    - keep `status` as `pending`
-   - enqueue `SourceEditorialWorker` again
+   - increment enrichment failure count
+   - set `enrichment_status` to `queued` until terminal threshold
+   - set `enrichment_status` to `failed` after 3 consecutive failures
 
-That last point is important: content-fetch failures do not currently ignore the source. They keep it pending so the editorial worker can still decide whether summary-only fallback or ignore behavior is appropriate.
+This means content-fetch failures do not immediately ignore the source, but editorial dispatch now gates strictly on `enrichment_status = ready`, so failed/queued sources are not dispatched into editorial cluster jobs.
 
 ### Raw Source State Machine
 
@@ -202,15 +206,19 @@ It has two job modes:
 Dispatch jobs:
 
 1. load pending sources in `external_published_at` order
+2. require `enrichment_status = ready`
 2. cap each batch by `source_batch_size`
 3. cap recursive dispatch rounds by `max_batches_per_run`
-4. enqueue one cluster job per pending source
+4. build deterministic topic clusters
+5. use optional bounded LLM similarity checks only for borderline comparisons
+6. enqueue one cluster job per resulting cluster
 
 Important current behavior:
 
-1. Each pending source is wrapped as its own cluster: `Enum.map(&[&1])`
-2. The semantic topic clusterer in [source_clusterer.ex](/Users/michael/Developer/elixir/leythers_com/lib/leythers_com/intelligence/source_clusterer.ex) exists, but it is not currently used by dispatch.
-3. So the active editorial path is effectively single-source cluster processing, not multi-source semantic clustering.
+1. Clustering is deterministic-first using title/content similarity and keyword overlap.
+2. LLM grouping checks are only used for borderline pairs and are capped per dispatch batch.
+3. Jobs remain traceable because each cluster task persists explicit `source_ids` for the grouped sources.
+4. Cluster job dedupe is keyed by `task + source_ids + generation_settings` (not by run id), so the same cluster is not re-enqueued repeatedly in a short window.
 
 #### Cluster Jobs
 
@@ -376,7 +384,9 @@ Current behavior is:
 2. `:no_relevant_sources`
    - source is marked ignored
 3. `:invalid_llm_draft_response`
-   - source is marked ignored
+   - source remains pending
+   - cluster is recorded as `skipped_validation`
+   - bounded retries are attempted in-process before returning this outcome
 4. hard LLM availability failures such as timeout, circuit open, rate limit, missing API key, transport failure, or request failure
    - source remains pending
    - no deterministic fallback is used
@@ -429,7 +439,7 @@ Source-state behavior by outcome:
 
 1. waiting for content: remains `pending`
 2. irrelevant: transitions to `ignored`
-3. invalid draft: transitions to `ignored`
+3. invalid draft: remains `pending` for future retries/reprocessing
 4. publish error after content-layer failure: source is marked `processed` to avoid infinite retry loops on validation/publish defects
 5. LLM unavailable before publish: source remains pending
 
@@ -520,8 +530,8 @@ This surface is best for inspecting prompt, context, and response bodies directl
 
 These points are important for anyone modifying the pipeline:
 
-1. The active editorial dispatcher does not currently use semantic multi-source clustering. It enqueues one pending source per cluster job.
-2. `SourceClusterer` exists and logs its LLM calls, but it is not in the live dispatch path.
+1. The active editorial dispatcher uses `SourceClusterer` in the live path and enqueues one cluster job per resulting cluster (often multi-source).
+2. `SourceClusterer` can use bounded LLM checks for borderline similarity and logs those calls with purpose `source_cluster_similarity`.
 3. Full-content fetch failures keep sources pending rather than ignoring them immediately.
 4. Relevance to Leigh is currently determined by straightforward keyword presence, not a richer entity model.
 5. The LLM draft path requires substantial output quality before a draft is accepted.

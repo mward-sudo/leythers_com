@@ -17,8 +17,10 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   alias LeythersCom.Intelligence
   alias LeythersCom.Intelligence.DecisionEngine
   alias LeythersCom.Intelligence.EditorialOrchestrator
+  alias LeythersCom.Intelligence.JobEffectEvent
   alias LeythersCom.Intelligence.LLMClient
   alias LeythersCom.Intelligence.QualityRubric
+  alias LeythersCom.Intelligence.SourceClusterer
   alias LeythersCom.Intelligence.StorySimilarity
   alias LeythersCom.Repo
 
@@ -27,6 +29,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_significance_threshold 70
   @default_prompt_version "source_editorial_v1"
   @default_enqueue_unique_seconds 3_600
+  @default_cluster_enqueue_unique_seconds 120
   @default_worker_timeout_ms 30_000
   @default_llm_draft_timeout_ms 7_500
   @default_llm_significance_timeout_ms 2_500
@@ -41,6 +44,12 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   @default_min_llm_update_confidence 0.80
   @default_headline_recent_similarity_threshold 0.82
   @default_article_similarity_update_threshold 0.62
+  @default_similarity_recency_window_hours 72
+  @default_draft_quality_attempts 1
+  @default_invalid_draft_retry_cooldown_seconds 1_800
+  @default_grouping_deterministic_merge_threshold 0.78
+  @default_grouping_deterministic_reject_threshold 0.45
+  @default_grouping_llm_max_comparisons 6
   @min_article_body_chars 1_500
   @min_article_body_paragraphs 8
   @headline_source_similarity_threshold 0.82
@@ -186,7 +195,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     generation_settings = current_generation_settings()
 
     pending_sources
-    |> Enum.map(&[&1])
+    |> cluster_sources_for_dispatch()
     |> Enum.reduce_while(:ok, fn cluster, :ok ->
       case build_cluster_job(cluster, run_id, generation_settings) |> Oban.insert() do
         {:ok, _job} -> {:cont, :ok}
@@ -195,19 +204,47 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end)
   end
 
-  defp build_cluster_job(cluster, run_id, generation_settings) do
+  defp cluster_sources_for_dispatch(pending_sources) do
+    SourceClusterer.cluster_by_topic(
+      pending_sources,
+      llm_enabled: runtime_setting(:llm_grouping_enabled, false),
+      llm_timeout_ms:
+        runtime_setting(:grouping_llm_timeout_ms, @default_llm_significance_timeout_ms),
+      llm_max_comparisons:
+        runtime_setting(:grouping_llm_max_comparisons, @default_grouping_llm_max_comparisons),
+      llm_grouping_min_jaccard: runtime_setting(:llm_grouping_min_jaccard, 0.0),
+      deterministic_merge_threshold:
+        runtime_setting(
+          :grouping_deterministic_merge_threshold,
+          @default_grouping_deterministic_merge_threshold
+        ),
+      deterministic_reject_threshold:
+        runtime_setting(
+          :grouping_deterministic_reject_threshold,
+          @default_grouping_deterministic_reject_threshold
+        ),
+      similarity_classifier: grouping_similarity_classifier()
+    )
+  end
+
+  defp grouping_similarity_classifier do
+    :leythers_com
+    |> Application.get_env(:intelligence_generation, [])
+    |> Keyword.get(:grouping_similarity_classifier)
+  end
+
+  defp build_cluster_job(cluster, _run_id, generation_settings) do
     source_ids = Enum.map(cluster, & &1.id)
 
     %{
       "task" => "cluster",
-      "process_run_id" => run_id,
       "source_ids" => source_ids,
       "generation_settings" => generation_settings
     }
     |> new(
       unique: [
         fields: [:worker, :args],
-        period: enqueue_unique_seconds(),
+        period: cluster_enqueue_unique_seconds(),
         states: [:available, :scheduled, :executing, :retryable]
       ]
     )
@@ -216,6 +253,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   defp fetch_pending_sources(source_limit) do
     RawSource
     |> where([source], source.status == "pending")
+    |> where([source], source.enrichment_status == "ready")
     |> order_by([source], asc: source.external_published_at, asc: source.inserted_at)
     |> limit(^source_limit)
     |> Repo.all()
@@ -257,22 +295,31 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp enqueue_dispatch_continuation(full_rerank?) do
-    delay_seconds = div(dispatch_delay_ms(), 1_000) |> max(1)
+    delay_seconds = div(dispatch_delay_ms(), 1_000)
     generation_settings = current_generation_settings()
 
-    %{
-      "task" => "dispatch",
-      "generation_settings" => generation_settings,
-      "full_rerank" => full_rerank?
-    }
-    |> new(
-      schedule_in: delay_seconds,
-      unique: [
-        fields: [:worker, :args],
-        period: enqueue_unique_seconds(),
-        states: [:available, :scheduled, :executing, :retryable]
-      ]
-    )
+    args =
+      %{
+        "task" => "dispatch",
+        "generation_settings" => generation_settings,
+        "full_rerank" => full_rerank?
+      }
+
+    unique_opts = [
+      fields: [:worker, :args],
+      period: enqueue_unique_seconds(),
+      states: [:available, :scheduled, :executing, :retryable]
+    ]
+
+    job_opts =
+      if delay_seconds > 0 do
+        [schedule_in: delay_seconds, unique: unique_opts]
+      else
+        [unique: unique_opts]
+      end
+
+    args
+    |> new(job_opts)
     |> Oban.insert()
 
     :ok
@@ -313,6 +360,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     RawSource
     |> where([source], source.id in ^source_ids)
     |> where([source], source.status == "pending")
+    |> where([source], source.enrichment_status == "ready")
     |> order_by([source], asc: source.external_published_at, asc: source.inserted_at)
     |> Repo.all()
   end
@@ -337,7 +385,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     }
 
     if Intelligence.ensure_generation_allowed!(Date.utc_today()) == :ok do
-      case build_article_attrs(cluster_sources) do
+      case maybe_build_article_attrs(cluster_sources, source_ids) do
         {:ok, attrs, llm_cost_attrs} ->
           publish_cluster_article(
             job,
@@ -373,6 +421,27 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
             decision_attrs,
             cluster_snapshot,
             started_at
+          )
+
+        {:error, :recent_invalid_draft_cooldown} ->
+          handle_invalid_draft_cooldown_cluster(
+            job,
+            source_ids,
+            run_id,
+            decision_attrs,
+            cluster_snapshot,
+            started_at
+          )
+
+        {:error, {:invalid_llm_draft_response, reason}} ->
+          handle_invalid_draft_cluster(
+            job,
+            source_ids,
+            run_id,
+            decision_attrs,
+            cluster_snapshot,
+            started_at,
+            reason
           )
 
         {:error, :invalid_llm_draft_response} ->
@@ -806,10 +875,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
          run_id,
          decision_attrs,
          cluster_snapshot,
-         started_at
+         started_at,
+         reason \\ :invalid_llm_draft_response
        ) do
     summary =
-      "sources #{length(source_ids)} skipped because llm draft response was invalid"
+      "sources #{length(source_ids)} waiting for valid quality draft output"
 
     llm_cost_attrs = zero_cost_attrs()
 
@@ -833,7 +903,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         run_id: run_id,
         prompt_version: prompt_version(),
         llm_cost: llm_cost_attrs,
-        reason: "invalid_llm_draft_response"
+        reason: inspect(reason)
       },
       error_summary: nil
     })
@@ -851,9 +921,101 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       target_article_id: nil
     })
 
-    ignored_count = mark_sources_ignored(source_ids)
-    {:ok, ignored_count}
+    # Keep sources pending so they can be retried with stricter quality guidance,
+    # rather than being terminally ignored.
+    {:ok, 0}
   end
+
+  defp handle_invalid_draft_cooldown_cluster(
+         job,
+         source_ids,
+         run_id,
+         decision_attrs,
+         cluster_snapshot,
+         started_at
+       ) do
+    summary =
+      "sources #{length(source_ids)} deferred due to recent draft-validation failure cooldown"
+
+    llm_cost_attrs = zero_cost_attrs()
+
+    persist_decision(
+      decision_attrs,
+      "skipped_validation",
+      nil,
+      summary,
+      llm_cost_attrs
+    )
+
+    persist_job_effect_event(job, %{
+      decision_action: "skipped_validation",
+      permanent_article_id: nil,
+      process_run_id: run_id,
+      source_ids: source_ids,
+      source_input_snapshot: cluster_snapshot,
+      change_summary: summary,
+      change_details: %{
+        source_count: length(source_ids),
+        run_id: run_id,
+        prompt_version: prompt_version(),
+        llm_cost: llm_cost_attrs,
+        reason: "recent_invalid_draft_cooldown"
+      },
+      error_summary: nil
+    })
+
+    emit_decision_telemetry(started_at, %{
+      result: :ok,
+      decision_action: "skipped_validation",
+      triage_action: "invalid_draft_cooldown",
+      source_count: length(source_ids),
+      significance_score: nil,
+      significance_threshold: nil,
+      prompt_version: prompt_version(),
+      llm_input_tokens: 0,
+      llm_output_tokens: 0,
+      target_article_id: nil
+    })
+
+    {:ok, 0}
+  end
+
+  defp maybe_build_article_attrs(cluster_sources, source_ids) do
+    if recent_invalid_draft_cooldown_active?(source_ids) do
+      {:error, :recent_invalid_draft_cooldown}
+    else
+      build_article_attrs(cluster_sources)
+    end
+  end
+
+  defp recent_invalid_draft_cooldown_active?(source_ids) when is_list(source_ids) do
+    cooldown_seconds =
+      runtime_setting(
+        :invalid_draft_retry_cooldown_seconds,
+        @default_invalid_draft_retry_cooldown_seconds
+      )
+
+    if cooldown_seconds <= 0 or source_ids == [] do
+      false
+    else
+      cutoff = DateTime.add(DateTime.utc_now(), -cooldown_seconds, :second)
+
+      JobEffectEvent
+      |> where([event], event.worker == ^worker_name())
+      |> where([event], event.decision_action == "skipped_validation")
+      |> where([event], event.inserted_at >= ^cutoff)
+      |> where(
+        [event],
+        fragment("? && ?", event.source_ids, type(^source_ids, {:array, Ecto.UUID}))
+      )
+      |> limit(1)
+      |> Repo.exists?()
+    end
+  end
+
+  defp recent_invalid_draft_cooldown_active?(_source_ids), do: false
+
+  defp worker_name, do: __MODULE__ |> Module.split() |> Enum.join(".")
 
   defp handle_llm_unavailable_cluster(
          job,
@@ -940,7 +1102,7 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp resolve_llm_draft_attrs(cluster_sources, rumour?, primary, summary_fallback) do
-    case llm_draft_attrs(cluster_sources, rumour?) do
+    case llm_draft_attrs_with_retries(cluster_sources, rumour?) do
       {:ok, _attrs, _llm_cost_attrs} = result ->
         result
 
@@ -950,11 +1112,49 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
       {:error, :no_relevant_sources} = error ->
         error
 
+      {:error, {:invalid_llm_draft_response, _reason}} = error ->
+        error
+
       {:error, :invalid_llm_draft_response} = error ->
         error
 
       {:error, reason} ->
         maybe_fallback_for_llm_failure(cluster_sources, primary, summary_fallback, reason)
+    end
+  end
+
+  defp llm_draft_attrs_with_retries(cluster_sources, rumour?) do
+    max_attempts =
+      max(runtime_setting(:draft_quality_attempts, @default_draft_quality_attempts), 1)
+
+    do_llm_draft_with_retries(cluster_sources, rumour?, 1, max_attempts, nil)
+  end
+
+  defp do_llm_draft_with_retries(cluster_sources, rumour?, attempt, max_attempts, _last_reason) do
+    case llm_draft_attrs(cluster_sources, rumour?) do
+      {:ok, _attrs, _cost} = success ->
+        success
+
+      {:error, {:invalid_llm_draft_response, reason}} when attempt < max_attempts ->
+        do_llm_draft_with_retries(cluster_sources, rumour?, attempt + 1, max_attempts, reason)
+
+      {:error, :invalid_llm_draft_response} when attempt < max_attempts ->
+        do_llm_draft_with_retries(
+          cluster_sources,
+          rumour?,
+          attempt + 1,
+          max_attempts,
+          :invalid_llm_draft_response
+        )
+
+      {:error, {:invalid_llm_draft_response, reason}} ->
+        {:error, {:invalid_llm_draft_response, reason}}
+
+      {:error, :invalid_llm_draft_response} ->
+        {:error, {:invalid_llm_draft_response, :invalid_llm_draft_response}}
+
+      other ->
+        other
     end
   end
 
@@ -1042,9 +1242,14 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
              }
            )
          end) do
-      {:ok, %{text: text}} -> parse_and_record_draft(prompt, text, source_headlines, context)
-      {:error, reason} -> {:error, reason}
-      :timeout -> {:error, :timeout}
+      {:ok, %{text: text} = response_payload} ->
+        parse_and_record_draft(prompt, response_payload, text, source_headlines, context)
+
+      {:error, reason} ->
+        {:error, reason}
+
+      :timeout ->
+        {:error, :timeout}
     end
   end
 
@@ -1057,22 +1262,22 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     end
   end
 
-  defp parse_and_record_draft(prompt, text, source_headlines, context) do
+  defp parse_and_record_draft(prompt, response_payload, text, source_headlines, context) do
     case parse_structured_editorial_response(text) do
       {:ok, attrs} ->
         case validate_draft_quality(attrs, source_headlines) do
           :ok ->
             final_attrs = reconcile_similarity_action(attrs, context)
             final_attrs = Map.put(final_attrs, :quality_scores, QualityRubric.score(final_attrs))
-            llm_cost_attrs = record_llm_cost(prompt, text)
+            llm_cost_attrs = record_llm_cost(prompt, text, provider_usage(response_payload))
             {:ok, final_attrs, llm_cost_attrs}
 
-          _ ->
-            {:error, :invalid_llm_draft_response}
+          {:error, reason} ->
+            {:error, {:invalid_llm_draft_response, reason}}
         end
 
       _ ->
-        {:error, :invalid_llm_draft_response}
+        {:error, {:invalid_llm_draft_response, :payload_parse_failed}}
     end
   end
 
@@ -1282,10 +1487,18 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     if Regex.match?(~r/^[0-9a-fA-F-]{36}$/, id), do: id, else: nil
   end
 
-  defp record_llm_cost(prompt, completion) do
-    prompt_tokens = estimate_tokens(prompt)
-    output_tokens = estimate_tokens(completion)
-    total_tokens = prompt_tokens + output_tokens
+  defp record_llm_cost(prompt, completion, usage) do
+    estimated_input_tokens = estimate_tokens(prompt)
+    estimated_output_tokens = estimate_tokens(completion)
+
+    {provider_input_tokens, provider_output_tokens, provider_total_tokens, provider_cost,
+     provider_cost_currency} =
+      usage
+      |> normalize_provider_usage()
+
+    input_tokens = provider_input_tokens || estimated_input_tokens
+    output_tokens = provider_output_tokens || estimated_output_tokens
+    total_tokens = input_tokens + output_tokens
 
     estimated_cost_gbp =
       llm_cost_per_1k_tokens_gbp()
@@ -1295,17 +1508,82 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     _ =
       Intelligence.upsert_cost_ledger(%{
         date: Date.utc_today(),
-        input_tokens: prompt_tokens,
+        input_tokens: input_tokens,
         output_tokens: output_tokens,
-        estimated_cost_gbp: estimated_cost_gbp
+        estimated_cost_gbp: estimated_cost_gbp,
+        provider_input_tokens: provider_input_tokens || 0,
+        provider_output_tokens: provider_output_tokens || 0,
+        provider_total_tokens: provider_total_tokens || 0,
+        provider_cost: provider_cost || Decimal.new("0"),
+        provider_cost_currency: provider_cost_currency || "credits"
       })
 
     %{
-      input_tokens: prompt_tokens,
+      input_tokens: input_tokens,
       output_tokens: output_tokens,
-      estimated_cost_gbp: estimated_cost_gbp
+      estimated_cost_gbp: estimated_cost_gbp,
+      provider_input_tokens: provider_input_tokens,
+      provider_output_tokens: provider_output_tokens,
+      provider_total_tokens: provider_total_tokens,
+      provider_cost: provider_cost,
+      provider_cost_currency: provider_cost_currency
     }
   end
+
+  defp provider_usage(%{usage: %{} = usage}), do: usage
+  defp provider_usage(_payload), do: nil
+
+  defp normalize_provider_usage(%{} = usage) do
+    input_tokens = normalize_int(usage[:input_tokens])
+    output_tokens = normalize_int(usage[:output_tokens])
+    total_tokens = normalize_int(usage[:total_tokens])
+
+    provider_cost =
+      case normalize_decimal(usage[:provider_cost]) do
+        nil -> nil
+        value -> value
+      end
+
+    currency =
+      usage[:provider_cost_currency]
+      |> normalize_currency()
+
+    {input_tokens, output_tokens, total_tokens, provider_cost, currency}
+  end
+
+  defp normalize_provider_usage(_), do: {nil, nil, nil, nil, nil}
+
+  defp normalize_int(value) when is_integer(value) and value >= 0, do: value
+  defp normalize_int(value) when is_float(value) and value >= 0, do: trunc(value)
+
+  defp normalize_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} when parsed >= 0 -> parsed
+      _ -> nil
+    end
+  end
+
+  defp normalize_int(_), do: nil
+
+  defp normalize_decimal(%Decimal{} = value), do: value
+  defp normalize_decimal(value) when is_integer(value) and value >= 0, do: Decimal.new(value)
+  defp normalize_decimal(value) when is_float(value) and value >= 0, do: Decimal.from_float(value)
+
+  defp normalize_decimal(value) when is_binary(value) do
+    case Decimal.parse(value) do
+      {parsed, ""} -> parsed
+      _ -> nil
+    end
+  end
+
+  defp normalize_decimal(_), do: nil
+
+  defp normalize_currency(value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: nil, else: String.downcase(value)
+  end
+
+  defp normalize_currency(_), do: nil
 
   defp estimate_tokens(text) when is_binary(text) do
     text
@@ -1383,8 +1661,24 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
 
     entries = Content.list_recent_articles_with_sources(similar_published_articles_limit())
 
-    similar_entries =
+    recency_window_hours =
+      runtime_setting(:similarity_recency_window_hours, @default_similarity_recency_window_hours)
+
+    cutoff = DateTime.add(DateTime.utc_now(), -recency_window_hours * 3600, :second)
+
+    recent_entries =
       Enum.filter(entries, fn entry ->
+        inserted_at = entry.article.inserted_at
+        updated_at = entry.article.updated_at || inserted_at
+
+        case updated_at do
+          %DateTime{} = dt -> DateTime.compare(dt, cutoff) in [:gt, :eq]
+          _ -> false
+        end
+      end)
+
+    similar_entries =
+      Enum.filter(recent_entries, fn entry ->
         article = entry.article
 
         StorySimilarity.similar?(article.title || "", reference_headline, 0.45) or
@@ -1836,6 +2130,13 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
     runtime_setting(:source_editorial_enqueue_unique_seconds, @default_enqueue_unique_seconds)
   end
 
+  defp cluster_enqueue_unique_seconds do
+    runtime_setting(
+      :source_editorial_cluster_enqueue_unique_seconds,
+      @default_cluster_enqueue_unique_seconds
+    )
+  end
+
   defp worker_timeout_ms do
     runtime_setting(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms)
   end
@@ -1932,6 +2233,11 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
         read_generation_setting(
           :source_editorial_enqueue_unique_seconds,
           @default_enqueue_unique_seconds
+        ),
+      source_editorial_cluster_enqueue_unique_seconds:
+        read_generation_setting(
+          :source_editorial_cluster_enqueue_unique_seconds,
+          @default_cluster_enqueue_unique_seconds
         ),
       source_editorial_worker_timeout_ms:
         read_generation_setting(:source_editorial_worker_timeout_ms, @default_worker_timeout_ms),
@@ -2076,7 +2382,16 @@ defmodule LeythersCom.Intelligence.SourceEditorialWorker do
   end
 
   defp zero_cost_attrs do
-    %{input_tokens: 0, output_tokens: 0, estimated_cost_gbp: Decimal.new("0")}
+    %{
+      input_tokens: 0,
+      output_tokens: 0,
+      estimated_cost_gbp: Decimal.new("0"),
+      provider_input_tokens: nil,
+      provider_output_tokens: nil,
+      provider_total_tokens: nil,
+      provider_cost: nil,
+      provider_cost_currency: nil
+    }
   end
 
   defp source_snapshot(cluster_sources) do

@@ -86,12 +86,21 @@ defmodule LeythersCom.Intelligence.LLMClient.OpenRouter do
          {:ok,
           %{
             status: 200,
-            body: %{"choices" => [%{"message" => %{"content" => response_text}} | _]}
+            body:
+              %{
+                "choices" => [%{"message" => %{"content" => response_text}} | _]
+              } = body
           }},
          model
        )
        when is_binary(response_text) do
-    {:ok, %{text: response_text, model: model}}
+    {:ok,
+     %{
+       text: response_text,
+       model: model,
+       usage: normalize_usage(Map.get(body, "usage")),
+       provider_generation_id: normalize_string(Map.get(body, "id"))
+     }}
   end
 
   defp parse_response({:ok, %{status: status, body: body}}, _model) do
@@ -144,4 +153,47 @@ defmodule LeythersCom.Intelligence.LLMClient.OpenRouter do
     |> to_string()
     |> String.trim_trailing("/")
   end
+
+  defp normalize_usage(%{} = usage) do
+    %{
+      input_tokens: normalize_int(Map.get(usage, "prompt_tokens")),
+      output_tokens: normalize_int(Map.get(usage, "completion_tokens")),
+      total_tokens: normalize_int(Map.get(usage, "total_tokens")),
+      provider_cost: normalize_number(Map.get(usage, "cost")),
+      provider_cost_currency: "credits",
+      is_byok: Map.get(usage, "is_byok")
+    }
+  end
+
+  defp normalize_usage(_), do: %{}
+
+  defp normalize_int(value) when is_integer(value), do: max(value, 0)
+  defp normalize_int(value) when is_float(value), do: max(trunc(value), 0)
+
+  defp normalize_int(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {parsed, ""} -> max(parsed, 0)
+      _ -> nil
+    end
+  end
+
+  defp normalize_int(_), do: nil
+
+  defp normalize_number(value) when is_integer(value) or is_float(value), do: value
+
+  defp normalize_number(value) when is_binary(value) do
+    case Float.parse(value) do
+      {parsed, ""} -> parsed
+      _ -> nil
+    end
+  end
+
+  defp normalize_number(_), do: nil
+
+  defp normalize_string(value) when is_binary(value) do
+    value = String.trim(value)
+    if value == "", do: nil, else: value
+  end
+
+  defp normalize_string(_), do: nil
 end

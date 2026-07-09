@@ -67,6 +67,9 @@ config :leythers_com, :intelligence_generation,
   llm_draft_enabled: false,
   llm_grouping_enabled: false,
   llm_grouping_min_jaccard: 0.0,
+  grouping_deterministic_merge_threshold: 0.78,
+  grouping_deterministic_reject_threshold: 0.45,
+  grouping_llm_max_comparisons: 0,
   grouping_llm_timeout_ms: 10,
   llm_cost_per_1k_tokens_gbp: "0.000000"
 

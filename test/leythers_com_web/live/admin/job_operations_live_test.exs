@@ -267,6 +267,49 @@ defmodule LeythersComWeb.Admin.JobOperationsLiveTest do
       assert html =~ "Generate article draft"
     end
 
+    test "maps source_editorial prompt versions by family, not exact version", %{conn: conn} do
+      process_run_id = Ecto.UUID.generate()
+
+      job =
+        create_job(
+          "completed",
+          "LeythersCom.Intelligence.SourceEditorialWorker",
+          "intelligence"
+        )
+
+      {:ok, event} =
+        Intelligence.create_job_effect_event(%{
+          oban_job_id: job.id,
+          worker: "LeythersCom.Intelligence.SourceEditorialWorker",
+          queue: "intelligence",
+          state: "completed",
+          attempt: 1,
+          decision_action: "created",
+          process_run_id: process_run_id,
+          source_ids: [Ecto.UUID.generate()],
+          source_input_snapshot: %{},
+          change_summary: "created article",
+          change_details: %{"prompt_version" => "source_editorial_v2"},
+          llm_prompt: "Write a Leythers-style rugby article in three parts.",
+          llm_output: "HEADLINE: Leigh Test"
+        })
+
+      {:ok, view, _html} = live(conn, ~p"/admin/jobs")
+
+      view
+      |> element("#process-#{process_run_id}")
+      |> render_click()
+
+      view
+      |> element("#event-btn-#{event.id}")
+      |> render_click()
+
+      html = render(view)
+
+      assert html =~ "LLM operation"
+      assert html =~ "Generate article draft"
+    end
+
     test "supports pagination for processes", %{conn: conn} do
       # Create multiple processes with events
       for i <- 1..21 do
