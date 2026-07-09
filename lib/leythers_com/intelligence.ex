@@ -43,7 +43,7 @@ defmodule LeythersCom.Intelligence do
          {:ok, normalized_provider} <- LLMProvider.normalize_provider(provider),
          {:ok, _setting} <- upsert_dev_llm_provider_setting(normalized_provider) do
       :ok = LLMProvider.activate(normalized_provider)
-      :ok = apply_dev_provider_runtime_settings(normalized_provider)
+      :ok = maybe_apply_dev_provider_runtime_settings(normalized_provider)
       {:ok, normalized_provider}
     else
       :error -> {:error, :invalid_provider}
@@ -56,7 +56,7 @@ defmodule LeythersCom.Intelligence do
          %RuntimeSetting{value: value} <- Repo.get_by(RuntimeSetting, key: @dev_llm_provider_key),
          {:ok, provider} <- LLMProvider.normalize_provider(value) do
       :ok = LLMProvider.activate(provider)
-      :ok = apply_dev_provider_runtime_settings(provider)
+      :ok = maybe_apply_dev_provider_runtime_settings(provider)
       {:ok, provider}
     else
       nil -> :ok
@@ -115,7 +115,7 @@ defmodule LeythersCom.Intelligence do
     )
   end
 
-  def apply_dev_provider_runtime_settings(provider \\ nil) do
+  def maybe_apply_dev_provider_runtime_settings(provider \\ nil) do
     if Application.get_env(:leythers_com, :runtime_env, :dev) == :dev do
       active_provider = provider || current_llm_provider()
 

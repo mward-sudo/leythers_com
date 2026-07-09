@@ -51,7 +51,7 @@ defmodule LeythersCom.Application do
     test_mode? = Keyword.get(oban_config, :testing) == :inline
 
     Intelligence.restore_dev_llm_provider()
-    Intelligence.apply_dev_provider_runtime_settings()
+    Intelligence.maybe_apply_dev_provider_runtime_settings()
 
     if not test_mode? do
       Task.Supervisor.start_child(LeythersCom.TaskSupervisor, fn ->
