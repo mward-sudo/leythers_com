@@ -50,8 +50,8 @@ defmodule LeythersCom.Application do
     oban_config = Application.get_env(:leythers_com, Oban, [])
     test_mode? = Keyword.get(oban_config, :testing) == :inline
 
-    _ = Intelligence.restore_dev_llm_provider()
-    _ = Intelligence.apply_dev_provider_runtime_settings()
+    Intelligence.restore_dev_llm_provider()
+    Intelligence.apply_dev_provider_runtime_settings()
 
     if not test_mode? do
       Task.Supervisor.start_child(LeythersCom.TaskSupervisor, fn ->
